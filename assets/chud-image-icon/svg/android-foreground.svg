@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Icon"><title>Icon</title><svg x="205" y="205" width="614" height="614" viewBox="0 0 256 256">
+<rect x="50" y="14" width="190" height="228" rx="24" fill="#011128"/>
+<rect x="64" y="28" width="162" height="184" rx="9" fill="#f9c83a"/>
+<rect x="134" y="220" width="22" height="14" rx="4" fill="#f9c83a"/>
+<g transform="translate(15 -4)">
+<path fill="#123f7d" stroke="#011128" stroke-width="6" stroke-linejoin="round" d="M80 104Q74 46 132 42Q190 46 184 104Q178 76 158 70Q132 82 104 72Q86 80 80 104Z"/>
+<path fill="none" stroke="#011128" stroke-width="6" stroke-linecap="round" d="M80 104Q82 130 92 146M184 104Q182 130 172 146"/>
+<path fill="none" stroke="#011128" stroke-width="8" stroke-linecap="round" d="M90 98L122 108M174 98L142 108"/>
+<rect x="88" y="112" width="36" height="24" rx="4" fill="#ffffff" stroke="#011128" stroke-width="6"/>
+<rect x="140" y="112" width="36" height="24" rx="4" fill="#ffffff" stroke="#011128" stroke-width="6"/>
+<path fill="#011128" d="M88 112H124V120L88 116ZM176 112H140V120L176 116Z"/>
+<circle cx="108" cy="124" r="5.5" fill="#011128"/><circle cx="156" cy="124" r="5.5" fill="#011128"/>
+<path fill="none" stroke="#011128" stroke-width="6" stroke-linecap="round" d="M124 122H140M88 120H80M176 120H184M123 152Q132 158 141 152"/>
+<path fill="none" stroke="#011128" stroke-width="8" stroke-linecap="round" d="M112 180Q132 168 152 180"/>
+</g>
+<g id="photos">
+<g transform="translate(26 168) rotate(5)"><rect width="92" height="74" rx="6" fill="#f9c83a" stroke="#011128" stroke-width="7"/></g>
+<g transform="translate(16 164) rotate(-2)"><rect width="92" height="74" rx="6" fill="#ffffff" stroke="#011128" stroke-width="7"/></g>
+<g transform="translate(6 160) rotate(-10)"><rect width="96" height="78" rx="6" fill="#ffffff" stroke="#011128" stroke-width="7"/>
+<rect x="11" y="11" width="74" height="52" rx="2" fill="#38d6ff"/>
+<path fill="#123f7d" d="M11 48Q40 30 85 42V63H11Z"/>
+<path fill="#ffffff" d="M24 28Q26 20 34 22Q40 16 46 22Q54 22 52 28Z"/>
+<circle cx="70" cy="24" r="7" fill="#f9c83a"/>
+<rect x="11" y="11" width="74" height="52" rx="2" fill="none" stroke="#011128" stroke-width="4"/></g>
+</g>
+
+</svg></svg>

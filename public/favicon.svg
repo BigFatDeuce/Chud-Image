@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Chud Image (16-24 px)"><title>Chud Image (16-24 px)</title>
+<rect x="13" y="2" width="49" height="60" rx="7" fill="#011128"/>
+<rect x="17" y="6" width="41" height="48" rx="2" fill="#f9c83a"/>
+<path fill="#123f7d" stroke="#011128" stroke-width="2.5" stroke-linejoin="round" d="M25 24Q24 9 38 9Q52 9 51 24Q46 17 38 18Q30 17 25 24Z"/>
+<rect x="24" y="25" width="12" height="8" rx="1.5" fill="#ffffff" stroke="#011128" stroke-width="2.5"/>
+<rect x="40" y="25" width="12" height="8" rx="1.5" fill="#ffffff" stroke="#011128" stroke-width="2.5"/>
+<path fill="#011128" d="M24 25H36V28L24 27ZM52 25H40V28L52 27Z"/>
+<path fill="none" stroke="#011128" stroke-width="2.5" stroke-linecap="round" d="M36 28H40M33 45Q38 41 43 45"/>
+<g transform="translate(2 40) rotate(-10)"><rect width="28" height="22" rx="2" fill="#ffffff" stroke="#011128" stroke-width="3"/>
+<rect x="4" y="4" width="20" height="14" fill="#38d6ff"/><path fill="#123f7d" d="M4 13Q12 8 24 11V18H4Z"/></g>
+</svg>

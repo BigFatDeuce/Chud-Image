@@ -1,0 +1,67 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Chud Image",
+  "version": "1.0.0",
+  "identifier": "com.bigfatdeuce.chudimage",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Chud Image",
+        "width": 1100,
+        "height": 760,
+        "minWidth": 520,
+        "minHeight": 380,
+        "center": true,
+        "decorations": false,
+        "shadow": true,
+        "visible": false,
+        "resizable": true,
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' data: blob: chud: http://chud.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost chud: http://chud.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Photography",
+    "shortDescription": "A fast, modern photo viewer",
+    "longDescription": "Chud Image is a lightweight desktop photo viewer inspired by Windows Photo Viewer: open a picture, browse its folder, zoom, rotate, print, delete and run a slideshow.",
+    "copyright": "© 2026 BigFatDeuce",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      { "ext": ["jpg", "jpeg", "jpe", "jfif"], "name": "JPEG image", "mimeType": "image/jpeg", "role": "Viewer" },
+      { "ext": ["png", "apng"], "name": "PNG image", "mimeType": "image/png", "role": "Viewer" },
+      { "ext": ["gif"], "name": "GIF image", "mimeType": "image/gif", "role": "Viewer" },
+      { "ext": ["webp"], "name": "WebP image", "mimeType": "image/webp", "role": "Viewer" },
+      { "ext": ["avif"], "name": "AVIF image", "mimeType": "image/avif", "role": "Viewer" },
+      { "ext": ["bmp", "dib"], "name": "Bitmap image", "mimeType": "image/bmp", "role": "Viewer" },
+      { "ext": ["tif", "tiff"], "name": "TIFF image", "mimeType": "image/tiff", "role": "Viewer" },
+      { "ext": ["heic", "heif"], "name": "HEIF image", "mimeType": "image/heif", "role": "Viewer" },
+      { "ext": ["ico"], "name": "Icon", "mimeType": "image/x-icon", "role": "Viewer" }
+    ],
+    "windows": {
+      "nsis": { "installMode": "currentUser" }
+    },
+    "linux": {
+      "deb": { "depends": [] },
+      "rpm": { "depends": [] }
+    }
+  }
+}
