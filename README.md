@@ -9,10 +9,10 @@
 Open a picture, flick through the folder, zoom, rotate, print, done.
 No library to import, no account, no cloud, no AI.
 
-[![Build](https://github.com/BigFatDeuce/Chud-Image/actions/workflows/build.yml/badge.svg)](https://github.com/BigFatDeuce/Chud-Image/actions/workflows/build.yml)
-![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4)
-![Linux](https://img.shields.io/badge/Linux-Fedora%20%7C%20Nobara-294172)
-![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB)
+![Version](https://img.shields.io/badge/version-1.0.0-3B82F6)
+![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-deb%20%7C%20rpm%20%7C%20AppImage-FCC624?logo=linux&logoColor=black)
+![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
 
 <img src="docs/screenshots/dark.png" width="820" alt="Chud Image in dark theme" />
 
@@ -103,11 +103,11 @@ screen but are never rewritten.
 ## Install
 
 Grab the latest build from the [Releases](https://github.com/BigFatDeuce/Chud-Image/releases)
-page, or from the artifacts of the latest [Build](https://github.com/BigFatDeuce/Chud-Image/actions/workflows/build.yml) run.
+page, or build it yourself (see below).
 
 - **Windows 10/11:** `Chud Image_x.y.z_x64-setup.exe` (per-user install, no admin needed) or the `.msi`.
   To make it your default viewer: right-click a photo → *Open with* → *Choose another app* → Chud Image → *Always*.
-- **Fedora / Nobara:** `sudo dnf install ./chud-image-x.y.z-1.x86_64.rpm`
+- **Fedora:** `sudo dnf install ./chud-image-x.y.z-1.x86_64.rpm`
 - **Debian / Ubuntu:** `sudo apt install ./chud-image_x.y.z_amd64.deb`
 - **Anything else:** the `.AppImage`.
 
@@ -118,7 +118,7 @@ You need [Node.js](https://nodejs.org) 20+ and [Rust](https://rustup.rs) (stable
 **Linux** also needs the WebKitGTK toolchain:
 
 ```bash
-# Fedora / Nobara
+# Fedora
 sudo dnf install webkit2gtk4.1-devel openssl-devel curl wget file libappindicator-gtk3-devel librsvg2-devel
 # optional, for HEIC support
 sudo dnf install libheif-devel
