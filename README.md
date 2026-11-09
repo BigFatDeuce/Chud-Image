@@ -20,6 +20,27 @@ No library to import, no account, no cloud.
 
 ---
 
+## What's new
+
+### 1.2
+
+- **Background removal** in the editor, with an adjustable threshold and a transparent preview.
+  The AI model is downloaded only if you ask for it (the app says exactly what, how big, and
+  from where), then everything runs offline on your computer.
+- **Text outline** is now optional and off by default, with its own opacity slider.
+- **Fixed:** the Save menu could open off-screen.
+
+### 1.1
+
+- **Editor** (`E`): crop, rotate, mirror, adjustments, filters, drawing and text, all undoable.
+- **In-app updates**: checks GitHub at startup, then downloads, verifies and installs in one click.
+- **New icon.**
+
+<p align="center">
+  <img src="docs/screenshots/editor-background.png" width="49%" alt="Background removal in the editor" />
+  <img src="docs/screenshots/editor-draw.png" width="49%" alt="Drawing and outlined text in the editor" />
+</p>
+
 ## Why
 
 Windows 7 Photo Viewer did one thing and did it right: double-click a photo, it opens instantly,
@@ -52,9 +73,6 @@ The old **E-mail** and **Burn** buttons are gone. Nobody misses them.
 <p align="center">
   <img src="docs/screenshots/glitch.png" width="49%" alt="Glitch transition" />
   <img src="docs/screenshots/light.png" width="49%" alt="Light theme" />
-</p>
-<p align="center">
-  <img src="docs/screenshots/editor.png" width="98%" alt="Editor" />
 </p>
 <p align="center">
   <img src="docs/screenshots/print.png" width="49%" alt="Print preview" />
@@ -201,3 +219,5 @@ src-tauri/src/      Rust backend
 The Chud Image icon in `assets/chud-image-icon` belongs to its author and is used as is.
 Built with Tauri, React, the `image` crate, `kamadak-exif`, `trash` and ONNX Runtime.
 The optional background-removal model is BiRefNet by Zheng Peng et al. (MIT), downloaded on request.
+The dog in the editor screenshots is "Portrait of a labrador retriever" by Dktue,
+[Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Portrait_of_a_labrador_retriever.jpg), CC0.
