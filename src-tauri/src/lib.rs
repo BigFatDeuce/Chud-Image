@@ -1,5 +1,6 @@
 //! Chud Image — backend.
 
+mod bgremove;
 mod decode;
 mod edit;
 mod error;
@@ -127,6 +128,55 @@ async fn save_edit(app: AppHandle, request: tauri::ipc::Request<'_>) -> AppResul
     .await
 }
 
+fn models_dir(app: &AppHandle) -> AppResult<PathBuf> {
+    app.path().app_local_data_dir().map_err(|e| AppError::new(ErrorCode::Io, e.to_string()))
+}
+
+#[tauri::command]
+fn bg_model_status(app: AppHandle) -> AppResult<bgremove::ModelStatus> {
+    Ok(bgremove::status(&models_dir(&app)?))
+}
+
+#[derive(Clone, serde::Serialize)]
+struct DownloadProgress {
+    received: u64,
+    total: u64,
+}
+
+/// Downloads the background-removal model, streaming progress to `on_progress`.
+#[tauri::command]
+async fn bg_model_download(app: AppHandle, on_progress: tauri::ipc::Channel<DownloadProgress>) -> AppResult<()> {
+    let dir = models_dir(&app)?;
+    let state = app.state::<bgremove::BgState>();
+    bgremove::download(&dir, &state, |received, total| {
+        let _ = on_progress.send(DownloadProgress { received, total });
+    })
+    .await
+}
+
+#[tauri::command]
+fn bg_model_cancel(app: AppHandle) {
+    bgremove::cancel(&app.state::<bgremove::BgState>());
+}
+
+#[tauri::command]
+async fn bg_model_delete(app: AppHandle) -> AppResult<()> {
+    let dir = models_dir(&app)?;
+    blocking(move || bgremove::delete(&dir, &app.state::<bgremove::BgState>())).await
+}
+
+/// Body: 1024×1024 RGBA pixels. Returns the 1024×1024 subject mask as raw bytes.
+#[tauri::command]
+async fn bg_mask(app: AppHandle, request: tauri::ipc::Request<'_>) -> AppResult<tauri::ipc::Response> {
+    let tauri::ipc::InvokeBody::Raw(rgba) = request.body() else {
+        return Err(AppError::new(ErrorCode::Io, "expected raw pixels"));
+    };
+    let rgba = rgba.clone();
+    let dir = models_dir(&app)?;
+    let mask = blocking(move || bgremove::mask(&dir, &app.state::<bgremove::BgState>(), &rgba)).await?;
+    Ok(tauri::ipc::Response::new(mask))
+}
+
 /// How the app was installed, which decides whether updates can install themselves.
 /// Linux .deb/.rpm installs are owned by the package manager.
 #[tauri::command]
@@ -236,6 +286,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(DecodeCache::new(384 * 1024 * 1024))
         .manage(LaunchPath(launch))
+        .manage(bgremove::BgState::default())
         .register_asynchronous_uri_scheme_protocol("chud", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
@@ -258,6 +309,11 @@ pub fn run() {
             save_settings,
             save_edit,
             install_kind,
+            bg_model_status,
+            bg_model_download,
+            bg_model_cancel,
+            bg_model_delete,
+            bg_mask,
         ])
         .setup(|app| {
             // The window starts hidden to avoid a white flash; the frontend shows it once

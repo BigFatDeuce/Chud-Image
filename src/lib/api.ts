@@ -1,4 +1,4 @@
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 
 export type ErrorCode =
   | "not_found"
@@ -9,6 +9,8 @@ export type ErrorCode =
   | "animated"
   | "too_large"
   | "trash_unavailable"
+  | "network"
+  | "cancelled"
   | "io";
 
 export interface AppError {
@@ -119,7 +121,27 @@ export interface EditOutcome {
   trashed: boolean;
 }
 
+export interface BgModelStatus {
+  installed: boolean;
+  name: string;
+  url: string;
+  homepage: string;
+  license: string;
+  size: number;
+}
+
 export const api = {
+  bgModelStatus: () => invoke<BgModelStatus>("bg_model_status"),
+  /** Downloads the background-removal model (only ever on the user's request). */
+  bgModelDownload: (onProgress: (received: number, total: number) => void) => {
+    const channel = new Channel<{ received: number; total: number }>();
+    channel.onmessage = (m) => onProgress(m.received, m.total);
+    return invoke<void>("bg_model_download", { onProgress: channel });
+  },
+  bgModelCancel: () => invoke<void>("bg_model_cancel"),
+  bgModelDelete: () => invoke<void>("bg_model_delete"),
+  /** 1024x1024 RGBA in, 1024x1024 subject mask (one byte per pixel) out. */
+  bgMask: async (rgba: Uint8Array) => new Uint8Array(await invoke<ArrayBuffer>("bg_mask", rgba)),
   installKind: () => invoke<"windows" | "macos" | "appimage" | "package">("install_kind"),
   /** Saves editor output (PNG bytes) as `dest`; "replace" sends the original to the trash. */
   saveEdit: (png: Uint8Array, dest: string, source: string, mode: "copy" | "replace", quality = 92) =>

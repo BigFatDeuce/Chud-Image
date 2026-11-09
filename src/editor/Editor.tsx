@@ -6,6 +6,7 @@ import {
   Circle,
   Copy,
   Crop,
+  Download,
   Eraser,
   FlipHorizontal2,
   FlipVertical2,
@@ -21,17 +22,25 @@ import {
   Sparkles,
   Square,
   Type,
+  Trash2,
   Undo2,
+  WandSparkles,
   X,
 } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { ConfirmDialog } from "../components/Modal";
-import { api, type AppError } from "../lib/api";
+import { api, toAppError, type AppError, type BgModelStatus } from "../lib/api";
 import { useI18n, type Key } from "../lib/i18n";
 import { dirName, extension, fileName } from "../lib/nav";
 import {
+  ALPHA_EXTENSIONS,
   applyAdjust,
+  applyMask,
   cropRect,
+  DEFAULT_THRESHOLD,
+  MASK_SIDE,
+  thresholdMask,
   dragCrop,
   drawAnnotation,
   drawOriented,
@@ -57,7 +66,7 @@ import {
   type Size,
 } from "./model";
 
-type Tool = "crop" | "adjust" | "filters" | "draw" | "text";
+type Tool = "crop" | "adjust" | "filters" | "draw" | "text" | "background";
 type DrawMode = "pen" | "marker" | "line" | "arrow" | "rect" | "ellipse" | "eraser";
 
 /** Formats the editor can write back; anything else is saved as a copy (PNG by default). */
@@ -138,6 +147,8 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
   const [color, setColor] = useState("#ef4444");
   const [brush, setBrush] = useState(6);
   const [textSize, setTextSize] = useState(36);
+  const [textOutline, setTextOutline] = useState(false);
+  const [outlineOpacity, setOutlineOpacity] = useState(70);
   const [ratioId, setRatioId] = useState("free");
   const [cropDraft, setCropDraft] = useState<Rect | null>(null);
   const [draft, setDraft] = useState<Annotation | null>(null);
@@ -148,6 +159,13 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
   const [saving, setSaving] = useState(false);
   const [confirm, setConfirm] = useState<null | "replace" | "discard">(null);
   const [stageSize, setStageSize] = useState<Size>({ w: 0, h: 0 });
+  // Background removal: model status, download progress, and the subject mask computed
+  // once per picture (kept outside the history so undo/redo just toggle its use).
+  const [bgStatus, setBgStatus] = useState<BgModelStatus | null>(null);
+  const [bgDownload, setBgDownload] = useState<{ received: number; total: number } | null>(null);
+  const [bgBusy, setBgBusy] = useState(false);
+  const [bgError, setBgError] = useState<string | null>(null);
+  const [mask, setMask] = useState<Uint8Array | null>(null);
 
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -229,6 +247,80 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
     [region.x, region.y, scale],
   );
 
+  // ---------------------------------------------------------------- background removal
+  const threshold = state.bg?.threshold ?? null;
+  const maskCanvas = useMemo(() => {
+    if (!mask || threshold === null) return null;
+    const c = document.createElement("canvas");
+    c.width = MASK_SIDE;
+    c.height = MASK_SIDE;
+    c.getContext("2d")!.putImageData(new ImageData(thresholdMask(mask, threshold), MASK_SIDE, MASK_SIDE), 0, 0);
+    return c;
+  }, [mask, threshold]);
+
+  useEffect(() => {
+    api.bgModelStatus().then(setBgStatus, () => undefined);
+  }, []);
+
+  const downloading = bgDownload !== null;
+  useEffect(() => {
+    // Leaving the editor stops a download in progress.
+    if (!downloading) return;
+    return () => void api.bgModelCancel();
+  }, [downloading]);
+
+  const describe = (e: unknown) => t(`error.${toAppError(e).code}` as Key);
+
+  const downloadModel = async () => {
+    setBgError(null);
+    setBgDownload({ received: 0, total: bgStatus?.size ?? 0 });
+    try {
+      await api.bgModelDownload((received, total) => setBgDownload({ received, total }));
+      setBgStatus(await api.bgModelStatus());
+    } catch (e) {
+      if (toAppError(e).code !== "cancelled") setBgError(describe(e));
+    } finally {
+      setBgDownload(null);
+    }
+  };
+
+  const deleteModel = async () => {
+    setBgError(null);
+    try {
+      await api.bgModelDelete();
+      setBgStatus(await api.bgModelStatus());
+    } catch (e) {
+      setBgError(describe(e));
+    }
+  };
+
+  const removeBackground = async () => {
+    if (!source) return;
+    setBgError(null);
+    setBgBusy(true);
+    try {
+      let m = mask;
+      if (!m) {
+        // Let the spinner paint before the model runs.
+        await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 30)));
+        const c = document.createElement("canvas");
+        c.width = MASK_SIDE;
+        c.height = MASK_SIDE;
+        const cx = c.getContext("2d", { willReadFrequently: true })!;
+        cx.imageSmoothingQuality = "high";
+        cx.drawImage(source, 0, 0, MASK_SIDE, MASK_SIDE);
+        const rgba = cx.getImageData(0, 0, MASK_SIDE, MASK_SIDE).data;
+        m = await api.bgMask(new Uint8Array(rgba.buffer, rgba.byteOffset, rgba.byteLength));
+        setMask(m);
+      }
+      commit((s) => ({ ...s, bg: { threshold: DEFAULT_THRESHOLD } }));
+    } catch (e) {
+      setBgError(describe(e));
+    } finally {
+      setBgBusy(false);
+    }
+  };
+
   // ---------------------------------------------------------------- rendering
   const paint = useCallback(() => {
     const canvas = canvasRef.current;
@@ -241,7 +333,7 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
       canvas.height = bh;
     }
     const k = scale * dpr;
-    const geoKey = [state.turns, state.flipH, state.flipV, region.x, region.y, region.w, region.h, bw, bh].join(",");
+    const geoKey = [state.turns, state.flipH, state.flipV, region.x, region.y, region.w, region.h, bw, bh, maskCanvas ? threshold : "-"].join(",");
     // Raw oriented pixels at view resolution, reused while only adjustments change.
     if (rawCache.current?.key !== geoKey) {
       const c = document.createElement("canvas");
@@ -249,6 +341,7 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
       c.height = bh;
       const cx = c.getContext("2d", { willReadFrequently: true })!;
       drawOriented(cx, source, srcSize, state, region, k);
+      if (maskCanvas) applyMask(cx, maskCanvas, srcSize, state, region, k);
       rawCache.current = { key: geoKey, data: cx.getImageData(0, 0, bw, bh) };
       baseCache.current = null;
     }
@@ -278,7 +371,7 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
     for (const a of state.annotations) drawAnnotation(ctx, a);
     if (draft) drawAnnotation(ctx, draft);
     ctx.restore();
-  }, [source, srcSize, state, region.x, region.y, region.w, region.h, scale, view.w, view.h, draft, tool, crop]);
+  }, [source, srcSize, state, region.x, region.y, region.w, region.h, scale, view.w, view.h, draft, tool, crop, maskCanvas, threshold]);
 
   useEffect(() => {
     const id = requestAnimationFrame(paint);
@@ -429,9 +522,10 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
     setTextEdit(null);
     if (te.value.trim()) {
       const size = textSize / Math.max(scale, 0.0001);
-      commit((s) => ({ ...s, annotations: [...s.annotations, { kind: "text", at: te.at, text: te.value, color, size }] }));
+      const outline = textOutline ? outlineOpacity / 100 : 0;
+      commit((s) => ({ ...s, annotations: [...s.annotations, { kind: "text", at: te.at, text: te.value, color, size, outline }] }));
     }
-  }, [commit, color, textSize, scale]);
+  }, [commit, color, textSize, scale, textOutline, outlineOpacity]);
 
   useEffect(() => {
     if (tool !== "text") commitText();
@@ -439,7 +533,7 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
 
   // ---------------------------------------------------------------- saving
   const render = async (): Promise<Uint8Array> => {
-    const canvas = renderFull(source!, srcSize, state);
+    const canvas = renderFull(source!, srcSize, state, maskCanvas);
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
     if (!blob) throw new Error("encode");
     return new Uint8Array(await blob.arrayBuffer());
@@ -462,7 +556,8 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
   const saveCopy = async () => {
     setSaveMenu(false);
     const ext = extension(path);
-    const outExt = WRITABLE_EXTENSIONS.has(ext) ? ext : "png";
+    // A cut-out subject needs a format that keeps transparency.
+    const outExt = WRITABLE_EXTENSIONS.has(ext) && (!state.bg || ALPHA_EXTENSIONS.has(ext)) ? ext : "png";
     const stem = fileName(path).replace(/\.[^.]+$/, "");
     const sep = path.includes("\\") ? "\\" : "/";
     const chosen = await saveDialog({
@@ -522,6 +617,7 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
     { id: "filters", icon: Sparkles, label: "ed.filters" },
     { id: "draw", icon: Brush, label: "ed.draw" },
     { id: "text", icon: Type, label: "ed.text" },
+    { id: "background", icon: WandSparkles, label: "ed.background" },
   ];
 
   const drawModes: { id: DrawMode; icon: typeof Crop; label: Key }[] = [
@@ -663,6 +759,112 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
         <p className="ed-hint">{t("ed.textHint")}</p>
         {colorPicker}
         {slider(t("ed.textSize"), textSize, 12, 120, setTextSize)}
+        <label className="toggle-row">
+          <span>{t("ed.outline")}</span>
+          <input type="checkbox" className="toggle" checked={textOutline} onChange={(e) => setTextOutline(e.target.checked)} />
+        </label>
+        {textOutline && slider(t("ed.outlineOpacity"), outlineOpacity, 5, 100, setOutlineOpacity)}
+      </>
+    );
+  }
+
+  if (tool === "background") {
+    const mb = (n: number) => t("bg.mb", { n: (n / 1e6).toFixed(n >= 1e8 ? 0 : 1) });
+    if (!bgStatus) {
+      panel = <LoaderCircle className="spin ed-panel-spinner" size={22} />;
+    } else if (!bgStatus.installed) {
+      const pct = bgDownload && bgDownload.total ? (bgDownload.received / bgDownload.total) * 100 : 0;
+      panel = (
+        <>
+          <p className="ed-hint">{t("bg.intro")}</p>
+          <div className="bg-model">
+            <strong>{t("bg.modelTitle")}</strong>
+            <dl>
+              <dt>{t("bg.model")}</dt>
+              <dd>{bgStatus.name}</dd>
+              <dt>{t("bg.size")}</dt>
+              <dd>{mb(bgStatus.size)}</dd>
+              <dt>{t("bg.license")}</dt>
+              <dd>{bgStatus.license}</dd>
+              <dt>{t("bg.from")}</dt>
+              <dd className="bg-url">
+                {bgStatus.url
+                  .replace(/^https:\/\//, "")
+                  .replace(/\/releases\/.*$/, "")
+                  .split("/")
+                  .map((part, i) => (
+                    <span key={i}>
+                      {i > 0 && "/"}
+                      <wbr />
+                      {part}
+                    </span>
+                  ))}
+              </dd>
+            </dl>
+            <button className="bg-link" onClick={() => void openUrl(bgStatus.homepage)}>
+              {t("bg.about")}
+            </button>
+          </div>
+          <p className="ed-hint">{t("bg.privacy")}</p>
+          {bgDownload ? (
+            <div className="bg-progress">
+              <div className="progress">
+                <div className="progress-bar" style={{ width: `${pct}%` }} />
+              </div>
+              <div className="bg-progress-row">
+                <small>
+                  {mb(bgDownload.received)} / {mb(bgDownload.total)}
+                </small>
+                <button className="btn btn-ghost" onClick={() => void api.bgModelCancel()}>
+                  {t("common.cancel")}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button className="btn btn-primary ed-wide" onClick={() => void downloadModel()}>
+              <Download size={15} />
+              {t("bg.download", { size: mb(bgStatus.size) })}
+            </button>
+          )}
+        </>
+      );
+    } else {
+      panel = (
+        <>
+          {state.bg ? (
+            <>
+              {slider(t("bg.threshold"), state.bg.threshold, 1, 99, (v) => live((s) => ({ ...s, bg: { threshold: v } })), () =>
+                commit((s) => ({ ...s, bg: { threshold: DEFAULT_THRESHOLD } })),
+              )}
+              <p className="ed-hint">{t("bg.thresholdHint")}</p>
+              <button className="btn btn-default ed-wide" onClick={() => commit((s) => ({ ...s, bg: null }))}>
+                {t("bg.restore")}
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="ed-hint">{t("bg.ready")}</p>
+              <button className="btn btn-primary ed-wide" disabled={bgBusy || !source} onClick={() => void removeBackground()}>
+                {bgBusy ? <LoaderCircle className="spin" size={15} /> : <WandSparkles size={15} />}
+                {bgBusy ? t("bg.working") : t("bg.remove")}
+              </button>
+            </>
+          )}
+          <div className="bg-installed">
+            <small>
+              {bgStatus.name} · {mb(bgStatus.size)}
+            </small>
+            <button className="ed-icon-btn" disabled={bgBusy} onClick={() => void deleteModel()} data-tip={t("bg.deleteModel")}>
+              <Trash2 size={16} />
+            </button>
+          </div>
+        </>
+      );
+    }
+    if (bgError) panel = (
+      <>
+        {panel}
+        <p className="bg-error">{bgError}</p>
       </>
     );
   }
@@ -703,7 +905,7 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
 
         <div className="editor-tabs" role="tablist">
           {tools.map((x) => (
-            <button key={x.id} role="tab" aria-selected={tool === x.id} className={`editor-tab${tool === x.id ? " on" : ""}`} onClick={() => setTool(x.id)}>
+            <button key={x.id} role="tab" aria-selected={tool === x.id} className={`editor-tab${tool === x.id ? " on" : ""}`} onClick={() => setTool(x.id)} aria-label={t(x.label)}>
               <x.icon size={17} />
               <span>{t(x.label)}</span>
             </button>
@@ -736,7 +938,13 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
                   <Replace size={18} />
                   <span>
                     <strong>{t("ed.replace")}</strong>
-                    <small>{canReplace ? t("ed.replaceHint") : t("ed.replaceUnavailable")}</small>
+                    <small>
+                      {!canReplace
+                        ? t("ed.replaceUnavailable")
+                        : state.bg && !ALPHA_EXTENSIONS.has(extension(path))
+                          ? t("ed.replaceNoAlpha")
+                          : t("ed.replaceHint")}
+                    </small>
                   </span>
                 </button>
               </div>
@@ -757,7 +965,7 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
           {failed && <div className="editor-msg">{t("ed.loadFailed")}</div>}
           {!source && !failed && <LoaderCircle className="spin editor-spinner" size={28} />}
           {source && scale > 0 && (
-            <div className="editor-canvas-wrap" style={{ width: view.w, height: view.h }}>
+            <div className={`editor-canvas-wrap${maskCanvas ? " checker" : ""}`} style={{ width: view.w, height: view.h }}>
               <canvas ref={canvasRef} style={{ width: view.w, height: view.h }} />
               {tool === "crop" && (
                 <div

@@ -24,6 +24,9 @@
       "allow": [
         {
           "url": "https://github.com/BigFatDeuce/*"
+        },
+        {
+          "url": "https://github.com/ZhengPeng7/BiRefNet*"
         }
       ]
     },

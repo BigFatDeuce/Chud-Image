@@ -16,6 +16,8 @@ pub enum ErrorCode {
     Animated,
     TooLarge,
     TrashUnavailable,
+    Network,
+    Cancelled,
     Io,
 }
 

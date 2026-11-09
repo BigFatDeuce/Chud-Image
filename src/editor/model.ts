@@ -33,7 +33,15 @@ export const FILTERS: Record<FilterId, Adjust> = {
 export type Annotation =
   | { kind: "pen"; points: Pt[]; color: string; size: number; opacity: number }
   | { kind: "line" | "arrow" | "rect" | "ellipse"; a: Pt; b: Pt; color: string; size: number }
-  | { kind: "text"; at: Pt; text: string; color: string; size: number };
+  | {
+      kind: "text";
+      at: Pt;
+      text: string;
+      color: string;
+      size: number;
+      /** Opacity (0…1) of a contrasting outline around the letters; absent or 0 = none. */
+      outline?: number;
+    };
 
 export interface Rect {
   x: number;
@@ -52,6 +60,8 @@ export interface EditState {
   adjust: Adjust;
   /** In oriented-image pixels (crop-independent, so the crop can change afterwards). */
   annotations: Annotation[];
+  /** Background removal (the subject mask itself lives outside the history); null = off. */
+  bg: { threshold: number } | null;
 }
 
 export const initialState = (turns = 0): EditState => ({
@@ -61,6 +71,7 @@ export const initialState = (turns = 0): EditState => ({
   crop: null,
   adjust: NEUTRAL,
   annotations: [],
+  bg: null,
 });
 
 export function isPristine(s: EditState, startTurns = 0): boolean {
@@ -70,9 +81,48 @@ export function isPristine(s: EditState, startTurns = 0): boolean {
     !s.flipV &&
     s.crop === null &&
     s.annotations.length === 0 &&
+    s.bg === null &&
     isNeutral(s.adjust)
   );
 }
+
+// ------------------------------------------------------------------ background removal
+
+/** Side of the square picture the background model works on. */
+export const MASK_SIDE = 1024;
+
+/** Threshold 50 is the model's own verdict; higher removes more, lower keeps more. */
+export const DEFAULT_THRESHOLD = 50;
+
+/**
+ * Turns the model's subject probabilities (0…255) into RGBA alpha. Pixels well above the
+ * threshold are kept, well below are removed, with a soft band in between for clean edges.
+ */
+export function thresholdMask(mask: Uint8Array, threshold: number): Uint8ClampedArray<ArrayBuffer> {
+  const t = Math.min(99, Math.max(1, threshold)) / 100;
+  const band = 0.15;
+  const lo = Math.max(0, t - band);
+  const hi = Math.min(1, t + band);
+  const lut = new Uint8ClampedArray(256);
+  for (let i = 0; i < 256; i++) {
+    const x = Math.min(1, Math.max(0, (i / 255 - lo) / (hi - lo)));
+    lut[i] = Math.round(255 * x * x * (3 - 2 * x));
+  }
+  const out = new Uint8ClampedArray(mask.length * 4);
+  for (let i = 0; i < mask.length; i++) out[i * 4 + 3] = lut[mask[i]];
+  return out;
+}
+
+/** Keeps only the subject: `mask` (source orientation) cuts out what `ctx` holds. */
+export function applyMask(ctx: CanvasRenderingContext2D, mask: CanvasImageSource, srcSize: Size, s: EditState, region: Rect, scale: number) {
+  ctx.save();
+  ctx.globalCompositeOperation = "destination-in";
+  drawOriented(ctx, mask, srcSize, s, region, scale);
+  ctx.restore();
+}
+
+/** Extensions that keep transparency when saved. */
+export const ALPHA_EXTENSIONS = new Set(["png", "webp", "tif", "tiff", "tga", "qoi"]);
 
 export const isNeutral = (a: Adjust) => (Object.keys(NEUTRAL) as (keyof Adjust)[]).every((k) => a[k] === 0);
 
@@ -306,14 +356,16 @@ export function drawAnnotation(ctx: CanvasRenderingContext2D, a: Annotation) {
   } else if (a.kind === "text") {
     ctx.font = TEXT_FONT(a.size);
     ctx.textBaseline = "top";
-    // A thin contrasting outline keeps text readable on any background.
+    const outline = Math.min(1, Math.max(0, a.outline ?? 0));
+    // Optional contrasting outline, to keep text readable on busy backgrounds.
     ctx.lineWidth = Math.max(2, a.size / 9);
-    ctx.strokeStyle = isLight(a.color) ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.7)";
+    ctx.strokeStyle = isLight(a.color) ? `rgba(0,0,0,${outline})` : `rgba(255,255,255,${outline})`;
+    ctx.fillStyle = a.color;
     const lines = a.text.split("\n");
     lines.forEach((line, i) => {
-      ctx.strokeText(line, a.at[0], a.at[1] + i * a.size * 1.2);
-      ctx.fillStyle = a.color;
-      ctx.fillText(line, a.at[0], a.at[1] + i * a.size * 1.2);
+      const y = a.at[1] + i * a.size * 1.2;
+      if (outline > 0) ctx.strokeText(line, a.at[0], y);
+      ctx.fillText(line, a.at[0], y);
     });
   } else {
     ctx.strokeStyle = a.color;
@@ -379,7 +431,7 @@ export function drawOriented(ctx: CanvasRenderingContext2D, src: CanvasImageSour
 }
 
 /** Full-resolution render of the edit, used for saving. */
-export function renderFull(src: CanvasImageSource, srcSize: Size, s: EditState): HTMLCanvasElement {
+export function renderFull(src: CanvasImageSource, srcSize: Size, s: EditState, mask?: CanvasImageSource | null): HTMLCanvasElement {
   const region = cropRect(s, srcSize);
   const w = Math.max(1, Math.round(region.w));
   const h = Math.max(1, Math.round(region.h));
@@ -388,6 +440,7 @@ export function renderFull(src: CanvasImageSource, srcSize: Size, s: EditState):
   canvas.height = h;
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
   drawOriented(ctx, src, srcSize, s, { ...region, w, h }, 1);
+  if (s.bg && mask) applyMask(ctx, mask, srcSize, s, { ...region, w, h }, 1);
   if (!isNeutral(s.adjust)) {
     // Row bands keep peak memory low on very large pictures.
     const band = 512;

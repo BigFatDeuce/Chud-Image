@@ -133,7 +133,7 @@
   height: 52px;
   flex: none;
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   padding: 0 12px;
@@ -224,7 +224,10 @@
 .ed-save-menu {
   position: absolute;
   top: calc(100% + 6px);
+  /* .menu-popup anchors to the left; this one opens leftwards from the right edge. */
+  left: auto;
   right: 0;
+  max-width: calc(100vw - 24px);
   width: 290px;
   padding: 6px;
 }
@@ -705,11 +708,100 @@
   font-weight: 500;
 }
 
-@media (max-width: 860px) {
+@media (max-width: 1060px) {
   .editor-tab span {
     display: none;
   }
+}
+
+@media (max-width: 860px) {
   .editor-panel {
     width: 230px;
   }
+}
+
+/* ------------------------------------------------------------ background removal */
+
+.editor-canvas-wrap.checker {
+  background-color: #fff;
+  background-image: conic-gradient(#d9dde3 25%, transparent 0 50%, #d9dde3 0 75%, transparent 0);
+  background-size: 16px 16px;
+}
+
+.ed-panel-spinner {
+  align-self: center;
+  margin-top: 24px;
+  color: var(--text-2);
+}
+
+.bg-model {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 10px;
+  background: var(--pill);
+}
+
+.bg-model strong {
+  font-size: 13px;
+}
+
+.bg-model dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.bg-model dt {
+  color: var(--text-2);
+}
+
+.bg-model dd {
+  margin: 0;
+  overflow-wrap: break-word;
+}
+
+.bg-link {
+  align-self: flex-start;
+  padding: 0;
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.bg-link:hover {
+  text-decoration: underline;
+}
+
+.bg-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bg-progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-2);
+}
+
+.bg-installed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--chrome-border);
+  color: var(--text-3);
+}
+
+.bg-error {
+  margin: 0;
+  color: #e5484d;
+  font-size: 13px;
 }

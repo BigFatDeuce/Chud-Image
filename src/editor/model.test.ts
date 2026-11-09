@@ -3,6 +3,8 @@ import {
   applyAdjust,
   channelLuts,
   cropRect,
+  DEFAULT_THRESHOLD,
+  thresholdMask,
   dragCrop,
   FILTERS,
   fitAspect,
@@ -146,5 +148,27 @@ describe("eraser hit test", () => {
     const ellipse: Annotation = { kind: "ellipse", a: [0, 0], b: [100, 100], color: "#000", size: 2 };
     expect(hitAnnotation(ellipse, [100, 50], 3)).toBe(true);
     expect(hitAnnotation(ellipse, [50, 50], 3)).toBe(false);
+  });
+});
+
+describe("background removal", () => {
+  it("keeps the subject, drops the background, softens the edge", () => {
+    const a = thresholdMask(new Uint8Array([0, 60, 128, 200, 255]), DEFAULT_THRESHOLD);
+    const alpha = [3, 7, 11, 15, 19].map((i) => a[i]);
+    expect(alpha[0]).toBe(0);
+    expect(alpha[4]).toBe(255);
+    expect(alpha[2]).toBeGreaterThan(100);
+    expect(alpha[2]).toBeLessThan(160);
+    for (let i = 1; i < alpha.length; i++) expect(alpha[i]).toBeGreaterThanOrEqual(alpha[i - 1]);
+  });
+
+  it("a higher threshold removes more", () => {
+    const m = new Uint8Array([170]);
+    expect(thresholdMask(m, 90)[3]).toBeLessThan(thresholdMask(m, 50)[3]);
+    expect(thresholdMask(m, 20)[3]).toBe(255);
+  });
+
+  it("counts as an edit", () => {
+    expect(isPristine({ ...initialState(), bg: { threshold: 50 } })).toBe(false);
   });
 });

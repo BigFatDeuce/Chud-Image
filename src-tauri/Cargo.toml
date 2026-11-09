@@ -1,6 +1,6 @@
 [package]
 name = "chud-image"
-version = "1.1.0"
+version = "1.2.0"
 description = "Chud Image — a modern successor to Windows Photo Viewer"
 authors = ["BigFatDeuce"]
 license = "MIT"
@@ -29,6 +29,11 @@ kamadak-exif = "0.6"
 imagesize = "0.15"
 trash = "5"
 percent-encoding = "2"
+# ONNX Runtime, statically linked, for the optional background-removal model.
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "download-binaries", "tls-rustls", "api-31"] }
+sha2 = "0.10"
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "system-proxy"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [

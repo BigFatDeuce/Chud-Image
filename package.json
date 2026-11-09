@@ -1,7 +1,7 @@
 {
   "name": "chud-image",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Chud Image — a modern successor to Windows Photo Viewer",
   "type": "module",
   "scripts": {
