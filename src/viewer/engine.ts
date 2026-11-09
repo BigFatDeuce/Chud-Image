@@ -12,7 +12,7 @@ import {
   zoomAround,
   type Size,
 } from "../lib/zoom";
-import { GlitchRenderer } from "./glitch";
+import { DEFAULT_GLITCH, GlitchRenderer } from "./glitch";
 
 export type TransitionKind = "glitch" | "fade" | "none";
 
@@ -68,6 +68,8 @@ export class ViewerEngine {
   private lastTime = 0;
   private loadToken = 0;
   private lastShow = 0;
+  /** Bumped by every transition so a superseded one never tears down its successor. */
+  private transitionGen = 0;
   private lastWheelNav = 0;
   private preloaded = new Map<string, Promise<HTMLImageElement>>();
   private drag: { id: number; sx: number; sy: number; ox: number; oy: number } | null = null;
@@ -442,17 +444,19 @@ export class ViewerEngine {
       return false;
     }
 
+    // Fast navigation still glitches every time: when a glitch is already on screen the
+    // next one starts from the frame being shown, so the effect chains without a gap.
     const now = performance.now();
-    const rapid = now - this.lastShow < 200;
+    const rapid = now - this.lastShow < 450;
     this.lastShow = now;
     const kind: TransitionKind =
-      req.transition && !rapid && !this.reducedMotion.matches && this.img ? this.opts.transition : "none";
-    const before = kind !== "none" ? this.snapshot() : null;
+      req.transition && !this.reducedMotion.matches && this.img ? this.opts.transition : "none";
+    const before = kind === "none" ? null : (kind === "glitch" && this.liveGlitchFrame()) || this.snapshot();
 
     this.cancelTransition();
     this.setImage(img, url, req.turns, req.checker);
     this.events.onLoaded({ w: this.natural.w, h: this.natural.h });
-    if (before) void this.runTransition(kind, before);
+    if (before) void this.runTransition(kind, before, rapid);
     return true;
   }
 
@@ -502,6 +506,26 @@ export class ViewerEngine {
     return ctx.createPattern(tile, "repeat") ?? a;
   }
 
+  /** A copy of the glitch frame currently on screen, if a glitch is playing. */
+  private liveGlitchFrame(): HTMLCanvasElement | null {
+    const fx = this.fxCanvas;
+    if (!fx.classList.contains("active") || fx.width < 2 || fx.height < 2) return null;
+    const vp = this.viewport();
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.round(vp.w * dpr);
+    const h = Math.round(vp.h * dpr);
+    if (w !== fx.width || h !== fx.height) return null;
+    const copy = document.createElement("canvas");
+    copy.width = w;
+    copy.height = h;
+    try {
+      copy.getContext("2d")?.drawImage(fx, 0, 0);
+    } catch {
+      return null;
+    }
+    return copy;
+  }
+
   /** Renders the stage as it currently looks into a canvas. */
   private snapshot(): HTMLCanvasElement | null {
     const vp = this.viewport();
@@ -543,18 +567,21 @@ export class ViewerEngine {
     this.fadeCanvas.classList.remove("active", "fading");
   }
 
-  private async runTransition(kind: TransitionKind, before: HTMLCanvasElement) {
+  private async runTransition(kind: TransitionKind, before: HTMLCanvasElement, rapid = false) {
+    const gen = ++this.transitionGen;
     if (kind === "glitch") {
       if (this.glitch === undefined) this.glitch = GlitchRenderer.create(this.fxCanvas);
       const after = this.snapshot();
       if (this.glitch && after) {
         try {
           this.fxCanvas.classList.add("active");
-          await this.glitch.play(before, after);
+          // Quicker bursts while the user is flicking through, so it never feels laggy.
+          await this.glitch.play(before, after, rapid ? { ...DEFAULT_GLITCH, duration: 340 } : DEFAULT_GLITCH);
         } catch {
           // Tainted canvas or lost context: the picture is already in place.
         } finally {
-          this.fxCanvas.classList.remove("active");
+          // A newer transition may already be drawing on this canvas: leave it alone.
+          if (gen === this.transitionGen) this.fxCanvas.classList.remove("active");
         }
         return;
       }

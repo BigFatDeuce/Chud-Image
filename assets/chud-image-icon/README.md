@@ -1,24 +1,45 @@
 # Icône Chud Image
 
-Liseuse de photos. Dessin vectoriel simple, sans image intégrée ni police. Fond transparent sauf `icon-square`.
+Dessin vectoriel pur (formes SVG, aucune image intégrée, aucune police). Fond transparent sauf `icon-square` et `icon-maskable`.
+
+## Quel fichier pour quoi
 
 | Fichier | Usage |
 |---|---|
-| `svg/logo-small.svg` | Fichier maître, 32 px et plus |
-| `svg/logo-tiny.svg` | Version épurée pour 16 à 24 px |
-| `svg/icon-macos.svg` | Tuile macOS |
-| `svg/icon-square.svg` | Carré plein pour iOS et les boutiques |
-| `icon.ico` / `icon.icns` | Windows / macOS |
+| `svg/logo.svg` | Fichier maître, écran « À propos », splash, grandes tailles (128 px et plus) |
+| `svg/logo-small.svg` | Version simplifiée pour 32 à 64 px |
+| `svg/logo-tiny.svg` | Version très simplifiée pour 16 à 24 px |
+| `svg/icon-macos.svg` | Tuile macOS avec marges officielles (824/1024) |
+| `svg/icon-square.svg` | Carré plein bord à bord, pour iOS et les boutiques |
+| `svg/icon-maskable.svg` | Android adaptatif et PWA maskable, dessin dans la zone sûre |
+| `icon.ico` | Windows, 9 tailles de 16 à 256 px |
+| `icon.icns` | macOS, de 16 à 1024 px |
 | `favicon.svg` | Favicon web |
-| `png/` | PNG de 16 à 1024 px |
+| `png/icon-N.png` | PNG transparents, chaque taille utilise la bonne version |
 
-Couleurs : marine `#011128`, bleu `#123f7d`, or `#f9c83a`, cyan `#38d6ff`, blanc `#ffffff`.
+## Règle importante
 
-Consigne pour Claude Code : « Le dossier `chud-image-icon/` contient l'icône de l'application. Lis son `README.md` et branche-la partout (exécutable, fenêtre, barre des tâches, favicon). Ne modifie pas les fichiers. »
+Ne pas réduire `logo.svg` en dessous de 128 px : les détails deviennent illisibles. Utiliser les PNG fournis ou les versions `small` et `tiny`.
+
+## Couleurs
+
+| Rôle | Hex |
+|---|---|
+| Bleu ciel foncé | `#1f74d6` |
+| Bleu ciel | `#7cc4f5` |
+| Bleu lac | `#0f4f9e` |
+| Vert colline | `#2f8a3c` |
+| Contour cadre | `#8fb3d6` |
+| Marine (lunettes) | `#011128` |
+| Blanc cadre | `#ffffff` |
+
+## Consigne à copier dans Claude Code
+
+> Le dossier `chud-image-icon/` contient l'icône de l'application. Lis son `README.md` et branche-la partout : icône de fenêtre et d'exécutable (`icon.ico`, `icon.icns`, `png/`), barre des tâches, favicon, et écran « À propos » avec `svg/logo.svg`. Ne redessine rien et n'altère pas les fichiers. Reprends les couleurs du README pour le thème de l'interface.
 
 ## Fond cyan `#38d6ff`
 
-Le fond cyan est utilisé sur toutes les icônes qui exigent un fond. Les PNG de `png/`, `icon.ico` et `favicon.svg` restent transparents.
+Le fond cyan remplace l'ancien fond bleu sur toutes les icônes qui exigent un fond. Les PNG de `png/`, `icon.ico` et `favicon.svg` restent transparents.
 
 | Dossier | Usage |
 |---|---|

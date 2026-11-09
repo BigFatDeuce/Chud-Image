@@ -24,6 +24,7 @@ describe("keyboard shortcuts", () => {
     expect(actionFor(key("Escape"))).toBe("escape");
     expect(actionFor(key("r"))).toBe("rotateRight");
     expect(actionFor(key("R", { shiftKey: true }))).toBe("rotateLeft");
+    expect(actionFor(key("e"))).toBe("edit");
   });
 
   it("maps Ctrl combinations", () => {

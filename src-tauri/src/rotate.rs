@@ -182,7 +182,7 @@ fn to_8bit(img: &DynamicImage) -> DynamicImage {
     }
 }
 
-fn encode(img: &DynamicImage, format: ImageFormat, icc: Option<Vec<u8>>) -> AppResult<Vec<u8>> {
+pub(crate) fn encode(img: &DynamicImage, format: ImageFormat, icc: Option<Vec<u8>>) -> AppResult<Vec<u8>> {
     let mut out = Cursor::new(Vec::new());
     match format {
         ImageFormat::Png => {

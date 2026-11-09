@@ -22,7 +22,8 @@ export type Action =
   | "info"
   | "shortcuts"
   | "closeImage"
-  | "copy";
+  | "copy"
+  | "edit";
 
 export interface KeyLike {
   key: string;
@@ -89,6 +90,7 @@ export function actionFor(e: KeyLike): Action | null {
   if (key === "+" || key === "=" || e.code === "NumpadAdd") return "zoomIn";
   if (key === "-" || key === "_" || e.code === "NumpadSubtract") return "zoomOut";
   if (key === "r") return e.shiftKey ? "rotateLeft" : "rotateRight";
+  if (key === "e" && !e.shiftKey) return "edit";
   return null;
 }
 

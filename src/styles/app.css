@@ -15,9 +15,10 @@
   --text-3: #8592a6;
   --hover: rgba(18, 63, 125, 0.075);
   --press: rgba(18, 63, 125, 0.14);
-  --accent: #1d60c8;
-  --accent-hover: #1852ad;
-  --accent-soft: rgba(29, 96, 200, 0.12);
+  /* Palette from the Chud Image icon: sky #1f74d6 / #7cc4f5, lake #0f4f9e. */
+  --accent: #1f74d6;
+  --accent-hover: #0f4f9e;
+  --accent-soft: rgba(31, 116, 214, 0.12);
   --focus: #2f8cff;
   --danger: #cf3238;
   --popover: #ffffff;
@@ -26,8 +27,8 @@
   --tip-bg: #1d2738;
   --tip-text: #f2f5fa;
   --pill: rgba(18, 63, 125, 0.065);
-  --orb: radial-gradient(circle at 50% 28%, #5b9dff 0%, #2366d1 52%, #123f7d 100%);
-  --orb-glow: rgba(35, 102, 209, 0.38);
+  --orb: radial-gradient(circle at 50% 28%, #7cc4f5 0%, #1f74d6 52%, #0f4f9e 100%);
+  --orb-glow: rgba(31, 116, 214, 0.38);
   --toggle-off: rgba(17, 38, 72, 0.22);
   --stage-theme: #e6eaf0;
   --checker-a: #ffffff;
@@ -46,9 +47,9 @@
   --text-3: #6d7889;
   --hover: rgba(255, 255, 255, 0.07);
   --press: rgba(255, 255, 255, 0.12);
-  --accent: #2f86e8;
-  --accent-hover: #4796ef;
-  --accent-soft: rgba(56, 182, 255, 0.16);
+  --accent: #2b85e4;
+  --accent-hover: #4b9cec;
+  --accent-soft: rgba(124, 196, 245, 0.16);
   --focus: #55b8ff;
   --danger: #ef5359;
   --popover: #262a33;
@@ -57,7 +58,7 @@
   --tip-bg: #eef1f6;
   --tip-text: #141a24;
   --pill: rgba(255, 255, 255, 0.055);
-  --orb: radial-gradient(circle at 50% 28%, #6cb6ff 0%, #2a74dc 52%, #123f7d 100%);
+  --orb: radial-gradient(circle at 50% 28%, #7cc4f5 0%, #1f74d6 52%, #0f4f9e 100%);
   --orb-glow: rgba(56, 182, 255, 0.35);
   --toggle-off: rgba(255, 255, 255, 0.2);
   --stage-theme: #111317;

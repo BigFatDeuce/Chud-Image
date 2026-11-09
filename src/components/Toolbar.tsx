@@ -4,6 +4,7 @@ import {
   Play,
   RotateCcw,
   RotateCw,
+  SquarePen,
   Scan,
   Shrink,
   SkipBack,
@@ -34,6 +35,7 @@ interface Props {
   onPlay: () => void;
   onRotate: (turns: 1 | -1) => void;
   onDelete: () => void;
+  onEdit: () => void;
 }
 
 function ZoomPopover({ scale, min, onChange, onClose }: { scale: number; min: number; onChange: (s: number) => void; onClose: () => void }) {
@@ -126,6 +128,9 @@ export function Toolbar(p: Props) {
             <RotateCw size={19} />
           </button>
           <span className="tb-sep" />
+          <button className="tb-btn" disabled={off} onClick={p.onEdit} data-tip={`${t("tb.edit")} (E)`}>
+            <SquarePen size={19} />
+          </button>
           <button className="tb-btn tb-danger" disabled={off} onClick={p.onDelete} data-tip={`${t("tb.delete")} (${t("kb.del")})`}>
             <Trash2 size={19} />
           </button>

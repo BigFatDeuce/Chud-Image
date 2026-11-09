@@ -61,6 +61,8 @@ pub struct Settings {
     pub transparency_checker: bool,
     /// Hide the toolbar in fullscreen after a few idle seconds.
     pub autohide_controls: bool,
+    /// Look for a new version on GitHub at startup.
+    pub auto_update: bool,
 }
 
 impl Default for Settings {
@@ -77,6 +79,7 @@ impl Default for Settings {
             background: Background::Auto,
             transparency_checker: true,
             autohide_controls: true,
+            auto_update: true,
         }
     }
 }
@@ -140,6 +143,7 @@ mod tests {
             background: Background::Black,
             transparency_checker: false,
             autohide_controls: false,
+            auto_update: false,
         };
         save(&path, &s).unwrap();
         assert_eq!(load(&path), s);

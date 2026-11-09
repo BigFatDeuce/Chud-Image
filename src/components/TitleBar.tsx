@@ -1,7 +1,8 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Copy, Maximize, Minus, Square, X } from "lucide-react";
+import { ArrowDownToLine, Copy, Maximize, Minus, Square, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import logo from "../logo.svg";
+import logoTiny from "../brand/logo-tiny.svg";
+import logoSmall from "../brand/logo-small.svg";
 import { useI18n } from "../lib/i18n";
 import { MenuBar, type Menu } from "./MenuBar";
 
@@ -11,9 +12,12 @@ interface Props {
   position: string | null;
   onFullscreen: () => void;
   onClose: () => void;
+  /** Version number when an update is waiting; shows a pill in the title bar. */
+  updateVersion?: string | null;
+  onUpdate?: () => void;
 }
 
-export function TitleBar({ menus, fileName, position, onFullscreen, onClose }: Props) {
+export function TitleBar({ menus, fileName, position, onFullscreen, onClose, updateVersion, onUpdate }: Props) {
   const { t } = useI18n();
   const [maximized, setMaximized] = useState(false);
 
@@ -32,7 +36,7 @@ export function TitleBar({ menus, fileName, position, onFullscreen, onClose }: P
     <header className="titlebar" data-tauri-drag-region onDoubleClick={(e) => {
       if ((e.target as HTMLElement).hasAttribute("data-tauri-drag-region")) win.toggleMaximize();
     }}>
-      <img className="titlebar-logo" src={logo} alt="" draggable={false} />
+      <img className="titlebar-logo" src={logoTiny} srcSet={`${logoTiny} 1x, ${logoSmall} 1.5x`} alt="" draggable={false} />
       <MenuBar menus={menus} />
       <div className="titlebar-title" data-tauri-drag-region>
         {fileName ? (
@@ -46,6 +50,12 @@ export function TitleBar({ menus, fileName, position, onFullscreen, onClose }: P
         )}
       </div>
       <div className="window-controls">
+        {updateVersion && (
+          <button className="update-pill" onClick={onUpdate} data-tip={t("update.available", { v: updateVersion })} data-tip-pos="below">
+            <ArrowDownToLine size={13} strokeWidth={2.2} />
+            {t("update.badge")}
+          </button>
+        )}
         <button className="wc-btn" onClick={onFullscreen} data-tip={`${t("win.fullscreen")} (F11)`} data-tip-pos="below">
           <Maximize size={14} strokeWidth={1.8} />
         </button>

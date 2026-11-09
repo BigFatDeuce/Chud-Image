@@ -1,11 +1,32 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Chud Image (16-24 px)"><title>Chud Image (16-24 px)</title>
-<rect x="13" y="2" width="49" height="60" rx="7" fill="#011128"/>
-<rect x="17" y="6" width="41" height="48" rx="2" fill="#f9c83a"/>
-<path fill="#123f7d" stroke="#011128" stroke-width="2.5" stroke-linejoin="round" d="M25 24Q24 9 38 9Q52 9 51 24Q46 17 38 18Q30 17 25 24Z"/>
-<rect x="24" y="25" width="12" height="8" rx="1.5" fill="#ffffff" stroke="#011128" stroke-width="2.5"/>
-<rect x="40" y="25" width="12" height="8" rx="1.5" fill="#ffffff" stroke="#011128" stroke-width="2.5"/>
-<path fill="#011128" d="M24 25H36V28L24 27ZM52 25H40V28L52 27Z"/>
-<path fill="none" stroke="#011128" stroke-width="2.5" stroke-linecap="round" d="M36 28H40M33 45Q38 41 43 45"/>
-<g transform="translate(2 40) rotate(-10)"><rect width="28" height="22" rx="2" fill="#ffffff" stroke="#011128" stroke-width="3"/>
-<rect x="4" y="4" width="20" height="14" fill="#38d6ff"/><path fill="#123f7d" d="M4 13Q12 8 24 11V18H4Z"/></g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Chud Image (32-64 px)"><title>Chud Image (32-64 px)</title>
+<defs>
+<linearGradient id="frame" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#dfe8f2"/></linearGradient>
+<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1f74d6"/><stop offset="0.55" stop-color="#7cc4f5"/><stop offset="1" stop-color="#cfeeff"/></linearGradient>
+<linearGradient id="lake" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3fa0e0"/><stop offset="1" stop-color="#0f4f9e"/></linearGradient>
+<linearGradient id="hill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7fd06a"/><stop offset="1" stop-color="#2f8a3c"/></linearGradient>
+<linearGradient id="hill2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9fb8d0"/><stop offset="1" stop-color="#5d7fa3"/></linearGradient>
+<linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/></linearGradient>
+<linearGradient id="lens" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#cfe6fb"/></linearGradient>
+<clipPath id="pic"><rect x="46" y="54" width="164" height="128" rx="4"/></clipPath>
+<filter id="sh" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="5" stdDeviation="6" flood-color="#0a2750" flood-opacity="0.35"/></filter>
+</defs>
+<g transform="rotate(-6 128 128)">
+<rect x="32" y="40" width="192" height="156" rx="12" fill="url(#frame)" stroke="#4f7fb3" stroke-width="6" filter="url(#sh)"/>
+<g clip-path="url(#pic)">
+<rect x="46" y="54" width="164" height="128" fill="url(#sky)"/>
+<g fill="#ffffff" opacity="0.9"><ellipse cx="88" cy="80" rx="22" ry="9"/><ellipse cx="104" cy="74" rx="16" ry="10"/><ellipse cx="170" cy="70" rx="20" ry="8"/><ellipse cx="184" cy="66" rx="12" ry="8"/></g>
+<path fill="url(#hill2)" d="M120 140L150 118L168 128L184 116L214 140Z"/>
+<path fill="url(#hill)" d="M40 142Q62 104 90 112Q112 120 132 140Z"/>
+<rect x="40" y="138" width="180" height="50" fill="url(#lake)"/>
+</g>
+<rect x="46" y="54" width="164" height="128" rx="4" fill="none" stroke="#9db7d1" stroke-width="1.5"/>
+<path fill="url(#gloss)" d="M36 52Q36 44 44 44H212Q220 44 220 52V96Q128 78 36 112Z"/>
+</g>
+<g filter="url(#sh)">
+<path fill="none" stroke="#011128" stroke-width="12" stroke-linecap="round" d="M120 196H136"/>
+<rect x="66" y="176" width="56" height="38" rx="7" fill="url(#lens)" stroke="#011128" stroke-width="10"/>
+<rect x="134" y="176" width="56" height="38" rx="7" fill="url(#lens)" stroke="#011128" stroke-width="10"/>
+<path fill="none" stroke="#011128" stroke-width="10" stroke-linecap="round" d="M66 186L50 182M190 186L206 182"/>
+<path fill="#ffffff" opacity="0.8" d="M76 184H98L80 204H76Z M144 184H166L148 204H144Z"/>
+</g>
 </svg>

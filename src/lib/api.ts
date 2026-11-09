@@ -49,6 +49,7 @@ export interface Settings {
   background: BackgroundSetting;
   transparencyChecker: boolean;
   autohideControls: boolean;
+  autoUpdate: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -63,6 +64,7 @@ export const DEFAULT_SETTINGS: Settings = {
   background: "auto",
   transparencyChecker: true,
   autohideControls: true,
+  autoUpdate: true,
 };
 
 export interface ExifEntry {
@@ -112,7 +114,23 @@ export interface SaveOutcome {
   method: RotationSupport;
 }
 
+export interface EditOutcome {
+  path: string;
+  trashed: boolean;
+}
+
 export const api = {
+  installKind: () => invoke<"windows" | "macos" | "appimage" | "package">("install_kind"),
+  /** Saves editor output (PNG bytes) as `dest`; "replace" sends the original to the trash. */
+  saveEdit: (png: Uint8Array, dest: string, source: string, mode: "copy" | "replace", quality = 92) =>
+    invoke<EditOutcome>("save_edit", png, {
+      headers: {
+        "x-dest": encodeURIComponent(dest),
+        "x-source": encodeURIComponent(source),
+        "x-mode": mode,
+        "x-quality": String(quality),
+      },
+    }),
   launchPath: () => invoke<string | null>("launch_path"),
   supportedExtensions: () => invoke<string[]>("supported_extensions"),
   openTarget: (path: string) => invoke<FolderListing>("open_target", { path }),

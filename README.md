@@ -6,10 +6,10 @@
 
 **A small, fast desktop photo viewer. Basically the heir of Windows 7 Photo Viewer.**
 
-Open a picture, flick through the folder, zoom, rotate, print, done.
+Open a picture, flick through the folder, zoom, rotate, touch it up, print, done.
 No library to import, no account, no cloud, no AI.
 
-![Version](https://img.shields.io/badge/version-1.0.0-3B82F6)
+![Version](https://img.shields.io/badge/version-1.1.0-1F74D6)
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)
 ![Linux](https://img.shields.io/badge/Linux-deb%20%7C%20rpm%20%7C%20AppImage-FCC624?logo=linux&logoColor=black)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
@@ -37,6 +37,7 @@ The old **E-mail** and **Burn** buttons are gone. Nobody misses them.
 | **Glitch transition** | Moving to the next photo plays a short WebGL glitch: slices tear, RGB channels split, blocks of the new picture bleed through. It can be switched to a fade, or off, in Settings. Respects "reduce motion". |
 | **Smooth zoom** | Zoom follows the cursor, with drag to pan, and soft magnets at "fit" and "100%". It runs from 10% of the fit size up to 3200%. Double-click toggles fit / actual size. |
 | **Rotation that's safe** | Rotating is a *pending* change until you press `Ctrl+S`. JPEGs are rotated **losslessly** by rewriting the EXIF orientation tag, so pixels are never re-encoded. PNG / BMP / TIFF / WebP-lossless are re-encoded without quality loss after asking. Writes are atomic (temp file + rename). |
+| **Quick edits** | `E` opens a simple editor: crop (free or 1:1, 4:3, 16:9…), rotate and mirror, brightness / contrast / saturation / warmth / vignette, one-click filters, pen, highlighter, lines, arrows, boxes, circles and text. Everything can be undone. Save a copy under a new name, or replace the original, which then goes to the Recycle Bin / Trash so nothing is lost. |
 | **Slideshow** | `F5` or the play orb. Fullscreen, configurable interval, optional loop, `Esc` to leave. |
 | **Fullscreen** | `F11`. The toolbar floats and hides itself along with the cursor. |
 | **Real printing** | A preview with paper size (A4, Letter, Legal, A3, A5, 10×15, 13×18), orientation, fit-to-page or original size, and margins. The image is centered and never cropped. |
@@ -44,11 +45,15 @@ The old **E-mail** and **Burn** buttons are gone. Nobody misses them.
 | **Delete** | `Del` sends the file to the Recycle Bin / Trash. If there is no trash, it asks again before deleting permanently. |
 | **Themes** | System (default), Light, Dark. The interface changes color; the photo is never tinted. |
 | **Languages** | Français and English, following the system by default. |
+| **Updates** | Checks GitHub for a new version at startup (can be turned off in Settings) and shows a small badge in the title bar. One click downloads, verifies the signature, installs and restarts. On Linux this works with the AppImage; `.deb` / `.rpm` users get a link to the new package. |
 | **Folder changes** | Files deleted or added behind its back are noticed when the window gets focus again. |
 
 <p align="center">
   <img src="docs/screenshots/glitch.png" width="49%" alt="Glitch transition" />
   <img src="docs/screenshots/light.png" width="49%" alt="Light theme" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/editor.png" width="98%" alt="Editor" />
 </p>
 <p align="center">
   <img src="docs/screenshots/print.png" width="49%" alt="Print preview" />
@@ -89,6 +94,8 @@ screen but are never rewritten.
 | Double-click | Toggle fit / actual size |
 | `R` / `Shift+R` (or `Ctrl+.` / `Ctrl+,`) | Rotate clockwise / counter-clockwise |
 | `Ctrl+S` / `Ctrl+Shift+S` | Save rotation / Save as |
+| `E` | Edit (crop, adjust, filters, draw, text) |
+| `Ctrl+Z` / `Ctrl+Y` | Undo / redo, in the editor |
 | `Del` | Move to Recycle Bin |
 | `F5` | Start slideshow |
 | `Space` | Next image, or pause / resume during a slideshow |
@@ -149,8 +156,8 @@ npm run tauri build -- --features heif
 ### Tests
 
 ```bash
-npm test                                      # zoom math, navigation, shortcuts
-cargo test --manifest-path src-tauri/Cargo.toml   # decoding, natural sort, lossless rotation, deletion, settings
+npm test                                      # zoom math, navigation, shortcuts, editor geometry and colour
+cargo test --manifest-path src-tauri/Cargo.toml   # decoding, natural sort, lossless rotation, edit saving, deletion, settings
 ```
 
 ## How it's built
@@ -163,6 +170,8 @@ cargo test --manifest-path src-tauri/Cargo.toml   # decoding, natural sort, loss
 - **Frontend: React + TypeScript.**
   - The viewer is a small imperative engine outside of React, so zoom and pan never trigger a re-render.
   - The glitch transition is a single WebGL2 fragment shader.
+  - The editor keeps a list of edits (never touching the file) and renders them at full size only when you save; the backend re-encodes to the target format and keeps the original EXIF data.
+- **Updates:** `tauri-plugin-updater` with a signed `latest.json` attached to each GitHub release.
 - **Lossless JPEG rotation:** only the EXIF `Orientation` tag is changed. If the file has no EXIF block, a minimal one is inserted. Image data is never touched.
 - **Settings** live in a JSON file in your config folder:
   - `%APPDATA%\com.bigfatdeuce.chudimage` on Windows.
@@ -172,12 +181,14 @@ cargo test --manifest-path src-tauri/Cargo.toml   # decoding, natural sort, loss
 src/                React UI
   viewer/engine.ts  zoom / pan / rotation / transitions
   viewer/glitch.ts  WebGL glitch transition
-  lib/              zoom math, navigation, shortcuts, i18n, printing
+  editor/           crop / adjust / draw editor
+  lib/              zoom math, navigation, shortcuts, i18n, printing, updater
 src-tauri/src/      Rust backend
   decode.rs         display pipeline + cache
   folder.rs         folder listing + natural sort
   jpeg_orient.rs    lossless EXIF orientation editing
   rotate.rs         saving rotations safely
+  edit.rs           saving edited pictures (copy or replace)
   raw.rs, wic.rs    RAW previews, Windows Imaging Component
   metadata.rs       properties dialog
 ```

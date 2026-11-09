@@ -2,10 +2,13 @@ import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ExternalLink } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import logo from "../logo.svg";
+import logo from "../brand/logo.svg";
+import logoSmall from "../brand/logo-small.svg";
 import type { Settings } from "../lib/api";
 import { useI18n, type Key } from "../lib/i18n";
+import type { Updater } from "../lib/updater";
 import { Modal } from "./Modal";
+import { UpdateStatus } from "./Update";
 
 function Segmented<T extends string>({ value, options, onChange }: { value: T; options: [T, string][]; onChange: (v: T) => void }) {
   return (
@@ -40,7 +43,19 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   );
 }
 
-export function SettingsDialog({ settings, onChange, onClose }: { settings: Settings; onChange: (s: Partial<Settings>) => void; onClose: () => void }) {
+export function SettingsDialog({
+  settings,
+  onChange,
+  onClose,
+  updater,
+  onOpenUpdate,
+}: {
+  settings: Settings;
+  onChange: (s: Partial<Settings>) => void;
+  onClose: () => void;
+  updater: Updater;
+  onOpenUpdate: () => void;
+}) {
   const { t } = useI18n();
   const intervals = [2, 3, 4, 5, 8, 10, 15, 30, 60];
   return (
@@ -125,6 +140,12 @@ export function SettingsDialog({ settings, onChange, onClose }: { settings: Sett
         <Toggle label={t("settings.loop")} checked={settings.slideshowLoop} onChange={(v) => onChange({ slideshowLoop: v })} />
         <Toggle label={t("settings.autohide")} checked={settings.autohideControls} onChange={(v) => onChange({ autohideControls: v })} />
       </section>
+
+      <section className="settings-section">
+        <h3>{t("settings.updates")}</h3>
+        <Toggle label={t("settings.autoUpdate")} checked={settings.autoUpdate} onChange={(v) => onChange({ autoUpdate: v })} />
+        <UpdateStatus updater={updater} onOpenDialog={onOpenUpdate} />
+      </section>
     </Modal>
   );
 }
@@ -133,6 +154,7 @@ const SHORTCUTS: [string[], Key][] = [
   [["←", "→"], "sc.prevNext"],
   [["Home", "End"], "sc.firstLast"],
   [["kb.space"], "sc.space"],
+  [["E"], "sc.edit"],
   [["+", "−"], "sc.zoom"],
   [["Ctrl", "0"], "sc.fit"],
   [["Ctrl", "1"], "sc.actual"],
@@ -194,7 +216,7 @@ export function AboutDialog({ extensions, onClose }: { extensions: string[]; onC
   return (
     <Modal title={t("about.title")} onClose={onClose} width={440} className="about-dialog">
       <div className="about">
-        <img src={logo} alt="" className="about-logo" />
+        <img src={logoSmall} srcSet={`${logoSmall} 1x, ${logo} 1.5x`} alt="" className="about-logo" />
         <h2>Chud Image</h2>
         {version && <p className="muted">{t("about.version", { v: version })}</p>}
         <p>{t("about.tagline")}</p>

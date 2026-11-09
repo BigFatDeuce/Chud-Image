@@ -1,6 +1,7 @@
 //! Chud Image — backend.
 
 mod decode;
+mod edit;
 mod error;
 mod files;
 mod folder;
@@ -99,6 +100,48 @@ async fn save_rotation(app: AppHandle, path: String, turns: i32, dest: Option<St
     .await
 }
 
+/// Saves an edited picture. The body is the PNG rendered by the editor; the target, the
+/// original and the mode travel in headers (percent-encoded paths).
+#[tauri::command]
+async fn save_edit(app: AppHandle, request: tauri::ipc::Request<'_>) -> AppResult<edit::EditOutcome> {
+    let tauri::ipc::InvokeBody::Raw(png) = request.body() else {
+        return Err(AppError::new(ErrorCode::Io, "expected raw image bytes"));
+    };
+    let png = png.clone();
+    let header = |name: &str| -> Option<String> {
+        let v = request.headers().get(name)?.to_str().ok()?;
+        Some(percent_encoding::percent_decode_str(v).decode_utf8_lossy().into_owned())
+    };
+    let dest = PathBuf::from(header("x-dest").ok_or_else(|| AppError::new(ErrorCode::Io, "missing destination"))?);
+    let source = header("x-source").map(PathBuf::from);
+    let mode = match header("x-mode").as_deref() {
+        Some("replace") => edit::SaveMode::ReplaceOriginal,
+        _ => edit::SaveMode::Copy,
+    };
+    let quality = header("x-quality").and_then(|q| q.parse().ok()).unwrap_or(92u8);
+    blocking(move || {
+        let outcome = edit::save(&dest, &png, source.as_deref(), mode, quality)?;
+        app.state::<DecodeCache>().forget(&dest);
+        Ok(outcome)
+    })
+    .await
+}
+
+/// How the app was installed, which decides whether updates can install themselves.
+/// Linux .deb/.rpm installs are owned by the package manager.
+#[tauri::command]
+fn install_kind() -> &'static str {
+    if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else if std::env::var_os("APPIMAGE").is_some() {
+        "appimage"
+    } else {
+        "package"
+    }
+}
+
 #[tauri::command]
 async fn delete_to_trash(app: AppHandle, path: String) -> AppResult<()> {
     blocking(move || {
@@ -189,6 +232,8 @@ pub fn run() {
         )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(DecodeCache::new(384 * 1024 * 1024))
         .manage(LaunchPath(launch))
         .register_asynchronous_uri_scheme_protocol("chud", |ctx, request, responder| {
@@ -211,6 +256,8 @@ pub fn run() {
             file_exists,
             load_settings,
             save_settings,
+            save_edit,
+            install_kind,
         ])
         .setup(|app| {
             // The window starts hidden to avoid a white flash; the frontend shows it once

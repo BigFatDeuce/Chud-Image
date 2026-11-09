@@ -245,6 +245,22 @@ pub fn set_orientation(jpeg: &[u8], orientation: u16) -> AppResult<Vec<u8>> {
     Ok(out)
 }
 
+/// Copies the EXIF block of `source` (if any) into `target`, a freshly encoded JPEG
+/// without EXIF, and resets the orientation to 1 because the pixels are now upright.
+/// Camera, date, GPS… survive an edit this way.
+pub fn transplant_exif(source: &[u8], target: &[u8]) -> AppResult<Vec<u8>> {
+    let Ok((Some(seg), _)) = find_exif(source) else { return Ok(target.to_vec()) };
+    let (existing, insert_at) = find_exif(target)?;
+    if existing.is_some() {
+        return set_orientation(target, 1);
+    }
+    let mut out = Vec::with_capacity(target.len() + seg.seg_end - seg.seg_start);
+    out.extend_from_slice(&target[..insert_at]);
+    out.extend_from_slice(&source[seg.seg_start..seg.seg_end]);
+    out.extend_from_slice(&target[insert_at..]);
+    set_orientation(&out, 1)
+}
+
 fn orientation_ifd_entry(endian: Endian, orientation: u16) -> [u8; 12] {
     let mut e = [0u8; 12];
     e[0..2].copy_from_slice(&endian.put_u16(TAG_ORIENTATION));

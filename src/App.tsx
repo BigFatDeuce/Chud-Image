@@ -10,8 +10,12 @@ import type { Menu, MenuItem } from "./components/MenuBar";
 import { ConfirmDialog } from "./components/Modal";
 import { PrintDialog } from "./components/PrintDialog";
 import { TitleBar } from "./components/TitleBar";
+import { UpdateDialog } from "./components/Update";
+import { useUpdater } from "./lib/updater";
+import { Editor, WRITABLE_EXTENSIONS } from "./editor/Editor";
 import { Toolbar } from "./components/Toolbar";
-import logo from "./logo.svg";
+import logo from "./brand/logo.svg";
+import logoSmall from "./brand/logo-small.svg";
 import {
   api,
   DEFAULT_SETTINGS,
@@ -36,6 +40,7 @@ type Dialog =
   | { kind: "settings" }
   | { kind: "shortcuts" }
   | { kind: "about" }
+  | { kind: "update" }
   | { kind: "delete"; path: string }
   | { kind: "deletePermanent"; path: string; reason: string }
   | { kind: "saveConfirm"; path: string; turns: number }
@@ -70,6 +75,7 @@ export default function App() {
   // ------------------------------------------------------------- settings & i18n
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [ready, setReady] = useState(false);
+  const updater = useUpdater(settings.autoUpdate, ready);
   const [systemDark, setSystemDark] = useState(() => window.matchMedia("(prefers-color-scheme: dark)").matches);
   const lang = resolveLang(settings.language);
   const i18n = useMemo(() => ({ lang, t: makeTranslator(lang) }), [lang]);
@@ -98,6 +104,7 @@ export default function App() {
   const [pending, setPending] = useState<Record<string, number>>({});
   const [versions, setVersions] = useState<Record<string, number>>({});
   const [support, setSupport] = useState<RotationSupport>("unsupported");
+  const [editing, setEditing] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [slideshow, setSlideshow] = useState({ active: false, playing: false, enteredFullscreen: false });
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -654,6 +661,12 @@ export default function App() {
   const engine = () => engineRef.current;
   const toggleFitActual = () => (zoom.fit ? engine()?.actualSize() : engine()?.fitToWindow());
 
+  function openEditor() {
+    if (!hasImage || !path) return;
+    stopSlideshow();
+    setContextMenu(null);
+    setEditing(true);
+  }
   const run = (action: Action, repeat = false) => {
     switch (action) {
       case "prev":
@@ -708,6 +721,8 @@ export default function App() {
         return closeImage();
       case "copy":
         return copyImage();
+      case "edit":
+        return !repeat && openEditor();
     }
   };
   const runRef = useRef(run);
@@ -717,7 +732,7 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       // Never let the webview reload or open its own find bar.
       if (e.key === "F5" || ((e.ctrlKey || e.metaKey) && ["r", "f", "g", "u", "j"].includes(e.key.toLowerCase()))) e.preventDefault();
-      if (isTypingTarget(e.target) || document.querySelector(".modal-backdrop")) return;
+      if (isTypingTarget(e.target) || document.querySelector(".modal-backdrop, .editor-root")) return;
       const action = actionFor(e);
       if (!action) return;
       e.preventDefault();
@@ -784,6 +799,7 @@ export default function App() {
       items: [
         sel(t("image.rotateLeft"), () => rotate(-1), `${t("kb.shift")}+R`, noImage),
         sel(t("image.rotateRight"), () => rotate(1), "R", noImage),
+        sel(t("image.edit"), () => openEditor(), "E", noImage),
         { type: "separator" },
         sel(t("ctx.copy"), copyImage, "Ctrl+C", noImage),
         sel(t("image.delete"), requestDelete, t("kb.del"), !path),
@@ -794,7 +810,17 @@ export default function App() {
     {
       id: "help",
       label: t("menu.help"),
-      items: [sel(t("help.shortcuts"), () => setDialog({ kind: "shortcuts" }), "F1"), { type: "separator" }, sel(t("help.about"), () => setDialog({ kind: "about" }))],
+      items: [sel(t("help.shortcuts"), () => setDialog({ kind: "shortcuts" }), "F1"),
+        {
+          type: "item",
+          label: t("help.updates"),
+          onSelect: () => {
+            setDialog({ kind: "update" });
+            if (updater.state.phase !== "available") void updater.checkNow(false);
+          },
+        },
+        { type: "separator" },
+        sel(t("help.about"), () => setDialog({ kind: "about" }))],
     },
   ];
 
@@ -803,6 +829,7 @@ export default function App() {
     { type: "separator" },
     sel(t("image.rotateRight"), () => rotate(1), "R"),
     sel(t("image.rotateLeft"), () => rotate(-1), `${t("kb.shift")}+R`),
+    sel(t("image.edit"), () => openEditor(), "E"),
     { type: "separator" },
     sel(t("ctx.copy"), copyImage, "Ctrl+C"),
     sel(t("file.reveal"), () => path && revealItemInDir(path)),
@@ -824,7 +851,15 @@ export default function App() {
         className={`app${fullscreen ? " is-fullscreen" : ""}${toolbarHidden ? " hide-cursor" : ""}${slideshow.active ? " in-slideshow" : ""}`}
         onPointerMove={fullscreen ? pokeControls : undefined}
       >
-        {!fullscreen && <TitleBar menus={menus} fileName={name} position={position} onFullscreen={() => setFs(true)} onClose={requestClose} />}
+        {!fullscreen && <TitleBar
+            menus={menus}
+            fileName={name}
+            position={position}
+            onFullscreen={() => setFs(true)}
+            onClose={requestClose}
+            updateVersion={updater.state.phase === "available" ? updater.state.version : null}
+            onUpdate={() => setDialog({ kind: "update" })}
+          />}
 
         <main className="stage-wrap">
           <div
@@ -840,7 +875,7 @@ export default function App() {
 
           {(status === "empty" || status === "emptyFolder") && (
             <div className="empty-state">
-              <img src={logo} alt="" className="empty-logo" draggable={false} />
+              <img src={logoSmall} srcSet={`${logoSmall} 1x, ${logo} 1.5x`} alt="" className="empty-logo" draggable={false} />
               <h1>{t("empty.title")}</h1>
               <p>{status === "emptyFolder" ? t("empty.folder") : t("empty.hint")}</p>
               <div className="empty-actions">
@@ -956,10 +991,44 @@ export default function App() {
           onPlay={togglePlay}
           onRotate={rotate}
           onDelete={requestDelete}
+          onEdit={() => openEditor()}
         />
 
+        {editing && path && (
+          <Editor
+            key={path}
+            path={path}
+            url={urlsFor(path).url}
+            fallbackUrl={urlsFor(path).fallbackUrl}
+            turns={pending[path] ?? 0}
+            canReplace={support !== "unsupported" && WRITABLE_EXTENSIONS.has(extension(path))}
+            onClose={() => setEditing(false)}
+            onError={(e) =>
+              showToast(t("toast.saveFailed", { reason: typeof e === "string" ? e : t(`error.${toAppError(e).code}` as Key) }))
+            }
+            onSaved={({ path: saved, replaced }) => {
+              setEditing(false);
+              if (replaced) {
+                setPending((old) => {
+                  const { [saved]: _, ...rest } = old;
+                  return rest;
+                });
+                pendingRef.current = { ...pendingRef.current, [saved]: 0 };
+                setVersions((v) => ({ ...v, [saved]: (v[saved] ?? 0) + 1 }));
+                showToast(t("toast.editReplaced"));
+              } else {
+                void openPath(saved);
+                showToast(t("toast.editCopySaved", { name: fileName(saved) }));
+              }
+            }}
+          />
+        )}
+
         {dialog?.kind === "info" && path && <InfoDialog path={path} displayed={natural} onClose={closeDialog} onToast={showToast} />}
-        {dialog?.kind === "settings" && <SettingsDialog settings={settings} onChange={updateSettings} onClose={closeDialog} />}
+        {dialog?.kind === "settings" && (
+          <SettingsDialog settings={settings} onChange={updateSettings} onClose={closeDialog} updater={updater} onOpenUpdate={() => setDialog({ kind: "update" })} />
+        )}
+        {dialog?.kind === "update" && <UpdateDialog updater={updater} onClose={closeDialog} />}
         {dialog?.kind === "shortcuts" && <ShortcutsDialog onClose={closeDialog} />}
         {dialog?.kind === "about" && <AboutDialog extensions={extensions} onClose={closeDialog} />}
         {dialog?.kind === "print" && (
