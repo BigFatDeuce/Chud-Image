@@ -23,27 +23,64 @@ use std::sync::Mutex;
 /// Side of the square the model works on.
 pub const SIDE: usize = 1024;
 
-pub struct ModelInfo {
-    pub name: &'static str,
+/// A file to download on request, checked against its SHA-256.
+pub struct Asset {
+    /// Name of the installed file in the models folder.
     pub file: &'static str,
     pub url: &'static str,
-    pub homepage: &'static str,
-    pub license: &'static str,
+    /// Size of the download.
     pub size: u64,
     pub sha256: &'static str,
+    /// For a .tgz download: the archive member to install as `file`.
+    pub member: Option<&'static str>,
+}
+
+pub struct ModelInfo {
+    pub name: &'static str,
+    pub homepage: &'static str,
+    pub license: &'static str,
+    pub asset: Asset,
 }
 
 /// BiRefNet general-purpose segmentation, "lite" (Swin-T backbone), exported to ONNX by
 /// the rembg project.
 pub const MODEL: ModelInfo = ModelInfo {
     name: "BiRefNet (general, lite)",
-    file: "birefnet-general-lite.onnx",
-    url: "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx",
     homepage: "https://github.com/ZhengPeng7/BiRefNet",
     license: "MIT",
-    size: 224_005_088,
-    sha256: "5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333",
+    asset: Asset {
+        file: "birefnet-general-lite.onnx",
+        url: "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx",
+        size: 224_005_088,
+        sha256: "5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333",
+        member: None,
+    },
 };
+
+/// On Linux, ONNX Runtime itself: Microsoft's official CPU build (needs glibc 2.28+).
+#[cfg(target_os = "linux")]
+pub const RUNTIME: Option<(&str, Asset)> = Some((
+    "ONNX Runtime 1.31 (Microsoft, MIT)",
+    Asset {
+        file: "libonnxruntime.so.1.31.0",
+        url: "https://github.com/microsoft/onnxruntime/releases/download/v1.31.0/onnxruntime-linux-x64-1.31.0.tgz",
+        size: 11_408_003,
+        sha256: "cc5c72baf5ae5c8238a6841f0897227be2d02826b9cf98eaf02fdefaeeb03a57",
+        member: Some("onnxruntime-linux-x64-1.31.0/lib/libonnxruntime.so.1.31.0"),
+    },
+));
+
+/// Elsewhere ONNX Runtime is linked into the app (Windows) or not available.
+#[cfg(not(target_os = "linux"))]
+pub const RUNTIME: Option<(&str, Asset)> = None;
+
+fn assets() -> Vec<&'static Asset> {
+    let mut v = vec![&MODEL.asset];
+    if let Some((_, rt)) = &RUNTIME {
+        v.push(rt);
+    }
+    v
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,6 +90,10 @@ pub struct ModelStatus {
     url: &'static str,
     homepage: &'static str,
     license: &'static str,
+    /// What else is downloaded with the model (Linux: ONNX Runtime).
+    runtime: Option<&'static str>,
+    runtime_url: Option<&'static str>,
+    /// Total download size.
     size: u64,
 }
 
@@ -72,19 +113,35 @@ fn net_err(e: impl Display) -> AppError {
     AppError::new(ErrorCode::Network, e.to_string())
 }
 
-pub fn model_path(dir: &Path) -> PathBuf {
-    dir.join("models").join(MODEL.file)
+fn asset_path(dir: &Path, a: &Asset) -> PathBuf {
+    dir.join("models").join(a.file)
 }
 
+pub fn model_path(dir: &Path) -> PathBuf {
+    asset_path(dir, &MODEL.asset)
+}
+
+fn asset_ready(dir: &Path, a: &Asset) -> bool {
+    match fs::metadata(asset_path(dir, a)) {
+        // An extracted file has its own size; a direct download must be complete.
+        Ok(m) => a.member.is_some() || m.len() == a.size,
+        Err(_) => false,
+    }
+}
+
+/// Whether ONNX Runtime can be used on this platform at all.
+const SUPPORTED: bool = cfg!(any(windows, target_os = "linux"));
+
 pub fn status(dir: &Path) -> ModelStatus {
-    let installed = fs::metadata(model_path(dir)).map(|m| m.len() == MODEL.size).unwrap_or(false);
     ModelStatus {
-        installed,
+        installed: SUPPORTED && assets().iter().all(|a| asset_ready(dir, a)),
         name: MODEL.name,
-        url: MODEL.url,
+        url: MODEL.asset.url,
         homepage: MODEL.homepage,
         license: MODEL.license,
-        size: MODEL.size,
+        runtime: RUNTIME.as_ref().map(|(label, _)| *label),
+        runtime_url: RUNTIME.as_ref().map(|(_, a)| a.url),
+        size: assets().iter().map(|a| a.size).sum(),
     }
 }
 
@@ -96,7 +153,7 @@ impl Drop for Busy<'_> {
     }
 }
 
-/// Downloads the model into `dir/models`, reporting `(received, total)` bytes.
+/// Downloads whatever is missing into `dir/models`, reporting `(received, total)` bytes.
 pub async fn download(dir: &Path, state: &BgState, mut progress: impl FnMut(u64, u64)) -> AppResult<()> {
     if state.downloading.swap(true, Ordering::SeqCst) {
         return Err(AppError::new(ErrorCode::Io, "already downloading"));
@@ -112,22 +169,32 @@ pub async fn download(dir: &Path, state: &BgState, mut progress: impl FnMut(u64,
         .user_agent(concat!("ChudImage/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(net_err)?;
+
+    let missing: Vec<&Asset> = assets().into_iter().filter(|a| !asset_ready(dir, a)).collect();
+    let total: u64 = missing.iter().map(|a| a.size).sum();
+    fs::create_dir_all(dir.join("models"))?;
+    let mut done = 0u64;
+    progress(0, total);
+    for a in missing {
+        fetch(&client, dir, a, state, |n| progress(done + n, total)).await?;
+        done += a.size;
+    }
+    Ok(())
+}
+
+async fn fetch(client: &reqwest::Client, dir: &Path, a: &Asset, state: &BgState, mut progress: impl FnMut(u64)) -> AppResult<()> {
     let mut response = client
-        .get(MODEL.url)
+        .get(a.url)
         .send()
         .await
         .and_then(|r| r.error_for_status())
         .map_err(net_err)?;
-    let total = response.content_length().unwrap_or(MODEL.size);
-
-    let target = model_path(dir);
-    fs::create_dir_all(target.parent().expect("model path has a parent"))?;
-    let part = target.with_extension("onnx.part");
+    let target = asset_path(dir, a);
+    let part = dir.join("models").join(format!("{}.part", a.file));
     let mut file = fs::File::create(&part)?;
     let mut hasher = Sha256::new();
     let mut received = 0u64;
     let mut last_report = 0u64;
-    progress(0, total);
 
     let result: AppResult<()> = async {
         while let Some(chunk) = response.chunk().await.map_err(net_err)? {
@@ -137,9 +204,9 @@ pub async fn download(dir: &Path, state: &BgState, mut progress: impl FnMut(u64,
             file.write_all(&chunk)?;
             hasher.update(&chunk);
             received += chunk.len() as u64;
-            if received - last_report >= 512 * 1024 || received == total {
+            if received - last_report >= 512 * 1024 {
                 last_report = received;
-                progress(received, total);
+                progress(received);
             }
         }
         file.sync_all()?;
@@ -150,17 +217,41 @@ pub async fn download(dir: &Path, state: &BgState, mut progress: impl FnMut(u64,
 
     let checked = result.and_then(|()| {
         let digest = format!("{:x}", hasher.finalize());
-        if received != MODEL.size || digest != MODEL.sha256 {
-            return Err(AppError::corrupt("the downloaded model does not match the expected file"));
+        if received != a.size || digest != a.sha256 {
+            return Err(AppError::corrupt("the downloaded file does not match the expected one"));
         }
-        Ok(())
+        progress(received);
+        match a.member {
+            Some(member) => extract(&part, member, &target),
+            None => fs::rename(&part, &target).map_err(AppError::from),
+        }
     });
-    if let Err(e) = checked {
-        let _ = fs::remove_file(&part);
-        return Err(e);
+    let _ = fs::remove_file(&part);
+    checked
+}
+
+/// Installs one file of a .tgz archive as `target`.
+#[cfg(not(windows))]
+fn extract(archive: &Path, member: &str, target: &Path) -> AppResult<()> {
+    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(fs::File::open(archive)?));
+    for entry in tar.entries()? {
+        let mut entry = entry?;
+        if entry.path()?.to_str() == Some(member) {
+            let tmp = target.with_extension("tmp");
+            let mut out = fs::File::create(&tmp)?;
+            std::io::copy(&mut entry, &mut out)?;
+            out.sync_all()?;
+            drop(out);
+            fs::rename(&tmp, target)?;
+            return Ok(());
+        }
     }
-    fs::rename(&part, &target)?;
-    Ok(())
+    Err(AppError::corrupt(format!("{member} is missing from the archive")))
+}
+
+#[cfg(windows)]
+fn extract(_archive: &Path, _member: &str, _target: &Path) -> AppResult<()> {
+    Err(AppError::unsupported("archives are only used on Linux"))
 }
 
 pub fn cancel(state: &BgState) {
@@ -169,11 +260,24 @@ pub fn cancel(state: &BgState) {
 
 pub fn delete(dir: &Path, state: &BgState) -> AppResult<()> {
     *state.session.lock().unwrap_or_else(|p| p.into_inner()) = None;
-    let path = model_path(dir);
-    if path.exists() {
-        fs::remove_file(path)?;
+    for a in assets() {
+        let path = asset_path(dir, a);
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn environment(_dir: &Path) -> AppResult<ort::environment::EnvironmentBuilder> {
+    Ok(ort::environment::init())
+}
+
+#[cfg(not(windows))]
+fn environment(dir: &Path) -> AppResult<ort::environment::EnvironmentBuilder> {
+    let (_, rt) = RUNTIME.as_ref().ok_or_else(|| AppError::unsupported("background removal is not available here"))?;
+    ort::environment::init_from(asset_path(dir, rt)).map_err(ort_err)
 }
 
 /// ImageNet normalisation, channel-planar, as BiRefNet expects.
@@ -208,7 +312,7 @@ pub fn mask(dir: &Path, state: &BgState, rgba: &[u8]) -> AppResult<Vec<u8>> {
         }
         let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
         // No telemetry: ONNX Runtime can report usage through Windows ETW otherwise.
-        let env = ort::environment::init()
+        let env = environment(dir)?
             .with_name("chud-image")
             .with_telemetry(false)
             .build()
@@ -264,6 +368,22 @@ mod tests {
         assert!(mask(dir.path(), &state, &vec![0; SIDE * SIDE * 4]).is_err());
         delete(dir.path(), &state).unwrap();
         assert!(!model_path(dir.path()).exists());
+    }
+
+    /// Downloads everything for real (about 235 MB), then runs it:
+    /// `CHUD_BG_MODEL_DIR=<empty dir> cargo test downloads_and_runs -- --ignored`.
+    #[test]
+    #[ignore]
+    fn downloads_and_runs() {
+        let dir = PathBuf::from(std::env::var("CHUD_BG_MODEL_DIR").expect("CHUD_BG_MODEL_DIR"));
+        let state = BgState::default();
+        let mut last = (0, 0);
+        tauri::async_runtime::block_on(download(&dir, &state, |r, t| last = (r, t))).unwrap();
+        assert!(status(&dir).installed);
+        assert_eq!(last.0, last.1);
+        assert_eq!(last.1, status(&dir).size);
+        assert!(!dir.join("models").read_dir().unwrap().any(|e| e.unwrap().file_name().to_string_lossy().ends_with(".part")));
+        runs_the_real_model();
     }
 
     /// Needs the real model: `CHUD_BG_MODEL_DIR=<dir containing models/…> cargo test -- --ignored`.

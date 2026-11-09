@@ -782,6 +782,12 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
             <dl>
               <dt>{t("bg.model")}</dt>
               <dd>{bgStatus.name}</dd>
+              {bgStatus.runtime && (
+                <>
+                  <dt>{t("bg.runtime")}</dt>
+                  <dd>{bgStatus.runtime}</dd>
+                </>
+              )}
               <dt>{t("bg.size")}</dt>
               <dd>{mb(bgStatus.size)}</dd>
               <dt>{t("bg.license")}</dt>

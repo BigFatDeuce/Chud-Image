@@ -29,13 +29,13 @@ kamadak-exif = "0.6"
 imagesize = "0.15"
 trash = "5"
 percent-encoding = "2"
-# ONNX Runtime, statically linked, for the optional background-removal model.
-ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "download-binaries", "tls-rustls", "api-31"] }
 sha2 = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "system-proxy"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 [target.'cfg(windows)'.dependencies]
+# ONNX Runtime for the optional background removal, statically linked on Windows.
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "download-binaries", "tls-rustls", "api-31"] }
 windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_System_Com",
@@ -43,6 +43,13 @@ windows = { version = "0.62", features = [
   "Win32_System_Variant",
   "Win32_Graphics_Imaging",
 ] }
+
+[target.'cfg(not(windows))'.dependencies]
+# On Linux the prebuilt static ONNX Runtime needs a very recent glibc, so the library is
+# loaded at runtime instead: Microsoft's official build, downloaded with the model.
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "load-dynamic", "api-31"] }
+flate2 = "1"
+tar = "0.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libheif-rs = { version = "2", optional = true }

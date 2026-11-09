@@ -127,6 +127,10 @@ export interface BgModelStatus {
   url: string;
   homepage: string;
   license: string;
+  /** Also downloaded with the model (Linux: ONNX Runtime), if anything. */
+  runtime: string | null;
+  runtimeUrl: string | null;
+  /** Total download size in bytes. */
   size: number;
 }
 
