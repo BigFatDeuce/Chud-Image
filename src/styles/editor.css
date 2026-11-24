@@ -232,6 +232,33 @@
   padding: 6px;
 }
 
+/* "Remove the GPS location", above the two ways of saving. */
+.ed-save-option {
+  gap: 12px;
+  margin: 0 0 6px;
+  padding: 10px 12px 12px;
+  border-bottom: 1px solid var(--chrome-border);
+  cursor: pointer;
+}
+
+.ed-save-option > svg {
+  flex: none;
+  color: var(--accent);
+}
+
+.ed-save-option > span {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.ed-save-option small {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
 .ed-save-item {
   width: 100%;
   display: flex;

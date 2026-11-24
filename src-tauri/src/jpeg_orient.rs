@@ -250,15 +250,19 @@ pub fn set_orientation(jpeg: &[u8], orientation: u16) -> AppResult<Vec<u8>> {
 /// Camera, date, GPS… survive an edit this way. The embedded thumbnail does not: it still
 /// shows the picture before the edit (an area cropped away or painted over would stay
 /// visible in it), so it is wiped. When that cannot be done safely, this fails and the
-/// caller saves without EXIF.
-pub fn transplant_exif(source: &[u8], target: &[u8]) -> AppResult<Vec<u8>> {
+/// caller saves without EXIF. With `strip_gps` the location goes too.
+pub fn transplant_exif(source: &[u8], target: &[u8], strip_gps: bool) -> AppResult<Vec<u8>> {
     let Ok((Some(seg), _)) = find_exif(source) else { return Ok(target.to_vec()) };
     let (existing, insert_at) = find_exif(target)?;
     if existing.is_some() {
         return set_orientation(target, 1);
     }
     let mut segment = source[seg.seg_start..seg.seg_end].to_vec();
-    drop_thumbnail(&mut segment[seg.tiff_start - seg.seg_start..])?;
+    let tiff = &mut segment[seg.tiff_start - seg.seg_start..];
+    drop_thumbnail(tiff)?;
+    if strip_gps {
+        drop_gps(tiff)?;
+    }
     let mut out = Vec::with_capacity(target.len() + segment.len());
     out.extend_from_slice(&target[..insert_at]);
     out.extend_from_slice(&segment);
@@ -266,6 +270,7 @@ pub fn transplant_exif(source: &[u8], target: &[u8]) -> AppResult<Vec<u8>> {
     set_orientation(&out, 1)
 }
 
+const TAG_GPS_IFD: u16 = 0x8825;
 const TAG_STRIP_OFFSETS: u16 = 0x0111;
 const TAG_STRIP_BYTE_COUNTS: u16 = 0x0117;
 const TAG_THUMB_OFFSET: u16 = 0x0201;
@@ -339,6 +344,63 @@ fn minimal_exif_segment(orientation: u16) -> Vec<u8> {
     seg.extend_from_slice(EXIF_HEADER);
     seg.extend_from_slice(&tiff);
     seg
+}
+
+/// Size in bytes of one value of a TIFF field type.
+fn type_size(field_type: u16) -> Option<usize> {
+    match field_type {
+        1 | 2 | 6 | 7 => Some(1),
+        3 | 8 => Some(2),
+        4 | 9 | 11 => Some(4),
+        5 | 10 | 12 => Some(8),
+        _ => None,
+    }
+}
+
+/// Removes the location: the GPS directory and every value it points to are zeroed and
+/// its entry is taken out of IFD0. No other byte moves, so every other offset stays valid.
+fn drop_gps(tiff: &mut [u8]) -> AppResult<()> {
+    let ifd0 = parse_tiff(tiff)?;
+    let e = ifd0.endian;
+    let entry_at = |i: usize| ifd0.offset + 2 + i * 12;
+    let Some(index) = (0..ifd0.count).find(|&i| e.u16(&tiff[entry_at(i)..]) == TAG_GPS_IFD) else {
+        return Ok(());
+    };
+    let gps = e.u32(&tiff[entry_at(index) + 8..]) as usize;
+    let bad = || AppError::corrupt("unexpected EXIF GPS layout");
+    if gps + 2 > tiff.len() {
+        return Err(bad());
+    }
+    let count = e.u16(&tiff[gps..]) as usize;
+    let dir_end = gps + 2 + count * 12 + 4;
+    if dir_end > tiff.len() {
+        return Err(bad());
+    }
+    // Values longer than four bytes live elsewhere in the block: wipe them first.
+    let mut wipe = Vec::new();
+    wipe.push(gps..dir_end);
+    for i in 0..count {
+        let at = gps + 2 + i * 12;
+        let size = type_size(e.u16(&tiff[at + 2..])).ok_or_else(bad)?;
+        let len = size.checked_mul(e.u32(&tiff[at + 4..]) as usize).ok_or_else(bad)?;
+        if len > 4 {
+            let start = e.u32(&tiff[at + 8..]) as usize;
+            let end = start.checked_add(len).filter(|&end| end <= tiff.len()).ok_or_else(bad)?;
+            wipe.push(start..end);
+        }
+    }
+    for range in wipe {
+        tiff[range].fill(0);
+    }
+    // Take the pointer out of IFD0: later entries and the next-IFD offset move up one slot.
+    let from = entry_at(index + 1);
+    let to = entry_at(ifd0.count) + 4;
+    tiff.copy_within(from..to, entry_at(index));
+    tiff[to - 12..to].fill(0);
+    let count_at = ifd0.offset;
+    let new_count = e.put_u16((ifd0.count - 1) as u16);
+    tiff[count_at..count_at + 2].copy_from_slice(&new_count);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -475,7 +537,7 @@ pub(crate) mod tests {
         for endian in [Endian::Little, Endian::Big] {
             let source = jpeg_with_thumbnail(endian, &thumb);
             assert!(has_thumbnail(&source));
-            let edited = transplant_exif(&source, &sample_jpeg()).unwrap();
+            let edited = transplant_exif(&source, &sample_jpeg(), false).unwrap();
             assert!(!has_thumbnail(&edited), "IFD1 still linked");
             assert!(!edited.windows(thumb.len()).any(|w| w == thumb.as_slice()), "thumbnail bytes still in the file");
             assert_eq!(exif_make(&edited).as_deref(), Some("\"Chud!\""), "other tags survive");
@@ -492,7 +554,93 @@ pub(crate) mod tests {
         let at = tiff + 34;
         assert_eq!(u16::from_le_bytes([source[at], source[at + 1]]), TAG_THUMB_OFFSET);
         source[at + 8..at + 12].copy_from_slice(&0x00FF_FFFFu32.to_le_bytes());
-        assert!(transplant_exif(&source, &sample_jpeg()).is_err());
+        assert!(transplant_exif(&source, &sample_jpeg(), false).is_err());
+    }
+
+    /// A JPEG with `Make` and a GPS directory holding a latitude (out-of-line rationals).
+    fn jpeg_with_gps(endian: Endian) -> Vec<u8> {
+        let base = sample_jpeg();
+        let e = endian;
+        let mut tiff = Vec::new();
+        tiff.extend_from_slice(if e == Endian::Little { b"II" } else { b"MM" });
+        tiff.extend_from_slice(&e.put_u16(42));
+        tiff.extend_from_slice(&e.put_u32(8));
+        // IFD0 at 8, two entries: Make → 38, GPS IFD → 44. Ends at 8 + 2 + 24 + 4 = 38.
+        tiff.extend_from_slice(&e.put_u16(2));
+        tiff.extend_from_slice(&e.put_u16(0x010F));
+        tiff.extend_from_slice(&e.put_u16(2));
+        tiff.extend_from_slice(&e.put_u32(6));
+        tiff.extend_from_slice(&e.put_u32(38));
+        tiff.extend_from_slice(&e.put_u16(TAG_GPS_IFD));
+        tiff.extend_from_slice(&e.put_u16(4));
+        tiff.extend_from_slice(&e.put_u32(1));
+        tiff.extend_from_slice(&e.put_u32(44));
+        tiff.extend_from_slice(&e.put_u32(0));
+        tiff.extend_from_slice(b"Chud!\0");
+        // GPS IFD at 44: LatitudeRef "N" (inline), Latitude 3 rationals at 74.
+        tiff.extend_from_slice(&e.put_u16(2));
+        tiff.extend_from_slice(&e.put_u16(0x0001));
+        tiff.extend_from_slice(&e.put_u16(2));
+        tiff.extend_from_slice(&e.put_u32(2));
+        tiff.extend_from_slice(b"N\0\0\0");
+        tiff.extend_from_slice(&e.put_u16(0x0002));
+        tiff.extend_from_slice(&e.put_u16(5));
+        tiff.extend_from_slice(&e.put_u32(3));
+        tiff.extend_from_slice(&e.put_u32(74));
+        tiff.extend_from_slice(&e.put_u32(0));
+        assert_eq!(tiff.len(), 74);
+        for (num, den) in [(48u32, 1u32), (51, 1), (123_456, 10_000)] {
+            tiff.extend_from_slice(&e.put_u32(num));
+            tiff.extend_from_slice(&e.put_u32(den));
+        }
+        let mut seg = vec![0xFF, 0xE1];
+        seg.extend_from_slice(&((2 + 6 + tiff.len()) as u16).to_be_bytes());
+        seg.extend_from_slice(EXIF_HEADER);
+        seg.extend_from_slice(&tiff);
+        let (_, insert_at) = find_exif(&base).unwrap();
+        let mut out = base[..insert_at].to_vec();
+        out.extend_from_slice(&seg);
+        out.extend_from_slice(&base[insert_at..]);
+        out
+    }
+
+    fn latitude(jpeg: &[u8]) -> Option<String> {
+        let exif = exif::Reader::new().read_from_container(&mut Cursor::new(jpeg)).ok()?;
+        Some(exif.get_field(exif::Tag::GPSLatitude, exif::In::PRIMARY)?.display_value().to_string())
+    }
+
+    #[test]
+    fn edits_can_leave_the_location_out() {
+        for endian in [Endian::Little, Endian::Big] {
+            let source = jpeg_with_gps(endian);
+            assert!(latitude(&source).is_some());
+            // Kept by default...
+            let kept = transplant_exif(&source, &sample_jpeg(), false).unwrap();
+            assert!(latitude(&kept).is_some());
+            // ...and gone, values included, on request.
+            let stripped = transplant_exif(&source, &sample_jpeg(), true).unwrap();
+            assert_eq!(latitude(&stripped), None);
+            assert!(!stripped.windows(4).any(|w| w == e_bytes(endian, 123_456)), "latitude bytes still in the file");
+            assert_eq!(exif_make(&stripped).as_deref(), Some("\"Chud!\""), "other tags survive");
+            assert_eq!(read_orientation(&stripped), 1);
+        }
+    }
+
+    fn e_bytes(endian: Endian, v: u32) -> [u8; 4] {
+        endian.put_u32(v)
+    }
+
+    #[test]
+    fn a_gps_directory_out_of_bounds_means_no_exif_at_all() {
+        let mut source = jpeg_with_gps(Endian::Little);
+        let tiff = source.windows(6).position(|w| w == EXIF_HEADER).unwrap() + 6;
+        // Second IFD0 entry (the GPS pointer) at 8 + 2 + 12; its value at +8.
+        let at = tiff + 22;
+        assert_eq!(u16::from_le_bytes([source[at], source[at + 1]]), TAG_GPS_IFD);
+        source[at + 8..at + 12].copy_from_slice(&0x00FF_FFFFu32.to_le_bytes());
+        assert!(transplant_exif(&source, &sample_jpeg(), true).is_err());
+        // Without stripping the pointer is never followed.
+        assert!(transplant_exif(&source, &sample_jpeg(), false).is_ok());
     }
 
     #[test]

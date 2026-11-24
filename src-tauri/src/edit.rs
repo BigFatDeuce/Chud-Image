@@ -41,9 +41,16 @@ pub fn is_writable(path: &Path) -> bool {
     WRITABLE.contains(&extension_of(path).as_str())
 }
 
+/// What travels with the picture besides its pixels.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SaveOptions {
+    /// Leave the GPS location out of the EXIF data.
+    pub strip_gps: bool,
+}
+
 /// Encodes the editor output for `dest`. `source` is the original file, used to carry
 /// the EXIF block over when both are JPEGs.
-pub fn encode_for(dest: &Path, png: &[u8], source: Option<&Path>, quality: u8) -> AppResult<Vec<u8>> {
+pub fn encode_for(dest: &Path, png: &[u8], source: Option<&Path>, quality: u8, options: SaveOptions) -> AppResult<Vec<u8>> {
     let ext = extension_of(dest);
     if !is_writable(dest) {
         return Err(AppError::new(ErrorCode::ReadOnlyFormat, format!("cannot write .{ext} files")));
@@ -61,7 +68,7 @@ pub fn encode_for(dest: &Path, png: &[u8], source: Option<&Path>, quality: u8) -
                 .unwrap_or(false);
             if is_jpeg_source {
                 if let Some(original) = source.and_then(|s| fs::read(s).ok()) {
-                    if let Ok(with_exif) = jpeg_orient::transplant_exif(&original, &out) {
+                    if let Ok(with_exif) = jpeg_orient::transplant_exif(&original, &out, options.strip_gps) {
                         return Ok(with_exif);
                     }
                 }
@@ -87,8 +94,8 @@ fn flatten_on_white(img: &DynamicImage) -> DynamicImage {
 }
 
 /// Writes the edit. In `ReplaceOriginal` mode `dest` must be the original file.
-pub fn save(dest: &Path, png: &[u8], source: Option<&Path>, mode: SaveMode, quality: u8) -> AppResult<EditOutcome> {
-    let bytes = encode_for(dest, png, source, quality)?;
+pub fn save(dest: &Path, png: &[u8], source: Option<&Path>, mode: SaveMode, quality: u8, options: SaveOptions) -> AppResult<EditOutcome> {
+    let bytes = encode_for(dest, png, source, quality, options)?;
     match mode {
         SaveMode::Copy => {
             safe_write::atomic_write(dest, &bytes)?;
@@ -178,7 +185,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         for ext in ["png", "jpg", "webp", "bmp", "tiff"] {
             let dest = dir.path().join(format!("out.{ext}"));
-            let out = save(&dest, &png_bytes(30, 20, 255), None, SaveMode::Copy, 90).unwrap();
+            let out = save(&dest, &png_bytes(30, 20, 255), None, SaveMode::Copy, 90, SaveOptions::default()).unwrap();
             assert!(!out.trashed);
             let back = image::open(&dest).unwrap();
             assert_eq!(back.dimensions(), (30, 20), "{ext}");
@@ -187,7 +194,7 @@ mod tests {
 
     #[test]
     fn transparent_pixels_become_white_in_jpeg() {
-        let bytes = encode_for(Path::new("x.jpg"), &png_bytes(8, 8, 0), None, 95).unwrap();
+        let bytes = encode_for(Path::new("x.jpg"), &png_bytes(8, 8, 0), None, 95, SaveOptions::default()).unwrap();
         let back = image::load_from_memory(&bytes).unwrap().to_rgb8();
         assert!(back.get_pixel(4, 4)[0] > 245);
     }
@@ -199,7 +206,7 @@ mod tests {
         let original = jpeg_orient::set_orientation(&jpeg_orient::tests::sample_jpeg(), 6).unwrap();
         fs::write(&src, &original).unwrap();
         let dest = dir.path().join("photo-edit.jpg");
-        save(&dest, &png_bytes(16, 16, 255), Some(&src), SaveMode::Copy, 90).unwrap();
+        save(&dest, &png_bytes(16, 16, 255), Some(&src), SaveMode::Copy, 90, SaveOptions::default()).unwrap();
         let saved = fs::read(&dest).unwrap();
         assert_eq!(jpeg_orient::read_orientation(&saved), 1);
         assert!(saved.windows(6).any(|w| w == b"Exif\0\0"));
@@ -207,7 +214,7 @@ mod tests {
 
     #[test]
     fn read_only_formats_are_refused() {
-        let err = encode_for(Path::new("x.heic"), &png_bytes(4, 4, 255), None, 90).unwrap_err();
+        let err = encode_for(Path::new("x.heic"), &png_bytes(4, 4, 255), None, 90, SaveOptions::default()).unwrap_err();
         assert_eq!(err.code, ErrorCode::ReadOnlyFormat);
     }
 
@@ -215,7 +222,7 @@ mod tests {
     fn replacing_a_missing_original_fails_cleanly() {
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("gone.png");
-        let err = save(&dest, &png_bytes(4, 4, 255), None, SaveMode::ReplaceOriginal, 90).unwrap_err();
+        let err = save(&dest, &png_bytes(4, 4, 255), None, SaveMode::ReplaceOriginal, 90, SaveOptions::default()).unwrap_err();
         assert_eq!(err.code, ErrorCode::NotFound);
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0, "no staged file left behind");
     }

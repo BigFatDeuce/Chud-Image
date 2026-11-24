@@ -12,6 +12,7 @@ import {
   FlipVertical2,
   Highlighter,
   LoaderCircle,
+  MapPinOff,
   Minus,
   MousePointer2,
   MoveUpRight,
@@ -155,6 +156,16 @@ const measureText: Measure = (a) => {
   return measureCtx ? textLayout(measureCtx, a) : roughMeasure(a);
 };
 
+/** Remembered between pictures: whether saved edits leave the GPS location out. */
+const STRIP_GPS_KEY = "chud-image.editor.stripGps";
+const readStripGps = () => {
+  try {
+    return localStorage.getItem(STRIP_GPS_KEY) === "1";
+  } catch {
+    return false;
+  }
+};
+
 const clampInt = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Math.round(v)));
 const isMarker = (a: Annotation) => a.kind === "pen" && a.opacity < 1;
 /** Pixels on screen within which the pointer grabs a line, and guides attract. */
@@ -196,6 +207,9 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
   const [guides, setGuides] = useState<{ x: number[]; y: number[] } | null>(null);
   const [hoverMovable, setHoverMovable] = useState(false);
   const [saveMenu, setSaveMenu] = useState(false);
+  // Only offered when the picture has a location to remove.
+  const [hasGps, setHasGps] = useState(false);
+  const [stripGps, setStripGps] = useState(readStripGps);
   const [saving, setSaving] = useState(false);
   const [confirm, setConfirm] = useState<null | "replace" | "discard">(null);
   const [stageSize, setStageSize] = useState<Size>({ w: 0, h: 0 });
@@ -309,6 +323,26 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
   useEffect(() => {
     api.bgModelStatus().then(setBgStatus, () => undefined);
   }, []);
+
+  useEffect(() => {
+    let alive = true;
+    api.imageInfo(path).then(
+      (info) => alive && setHasGps(!!info.gps),
+      () => undefined,
+    );
+    return () => {
+      alive = false;
+    };
+  }, [path]);
+
+  const toggleStripGps = (on: boolean) => {
+    setStripGps(on);
+    try {
+      localStorage.setItem(STRIP_GPS_KEY, on ? "1" : "0");
+    } catch {
+      // Not remembered, still applied to this save.
+    }
+  };
 
   const downloading = bgDownload !== null;
   useEffect(() => {
@@ -709,7 +743,7 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
       // Let the spinner paint before the heavy full-resolution render.
       await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 30)));
       const png = await render();
-      const outcome = await api.saveEdit(png, dest, path, mode);
+      const outcome = await api.saveEdit(png, dest, path, mode, { stripGps: hasGps && stripGps });
       onSaved({ path: outcome.path, replaced: outcome.trashed });
     } catch (e) {
       onError(e as AppError);
@@ -1174,6 +1208,16 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
             </button>
             {saveMenu && (
               <div className="menu-popup ed-save-menu" onPointerDown={(e) => e.stopPropagation()}>
+                {hasGps && (
+                  <label className="toggle-row ed-save-option">
+                    <MapPinOff size={16} />
+                    <span>
+                      <strong>{t("ed.stripGps")}</strong>
+                      <small>{t("ed.stripGpsHint")}</small>
+                    </span>
+                    <input type="checkbox" className="toggle" checked={stripGps} onChange={(e) => toggleStripGps(e.target.checked)} />
+                  </label>
+                )}
                 <button className="ed-save-item" onClick={() => void saveCopy()}>
                   <Copy size={18} />
                   <span>

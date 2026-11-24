@@ -131,8 +131,9 @@ async fn save_edit(app: AppHandle, request: tauri::ipc::Request<'_>) -> AppResul
         _ => edit::SaveMode::Copy,
     };
     let quality = header("x-quality").and_then(|q| q.parse().ok()).unwrap_or(92u8);
+    let options = edit::SaveOptions { strip_gps: header("x-strip-gps").as_deref() == Some("1") };
     blocking(move || {
-        let outcome = edit::save(&dest, &png, source.as_deref(), mode, quality)?;
+        let outcome = edit::save(&dest, &png, source.as_deref(), mode, quality, options)?;
         app.state::<DecodeCache>().forget(&dest);
         Ok(outcome)
     })

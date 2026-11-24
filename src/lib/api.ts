@@ -148,13 +148,14 @@ export const api = {
   bgMask: async (rgba: Uint8Array) => new Uint8Array(await invoke<ArrayBuffer>("bg_mask", rgba)),
   installKind: () => invoke<"windows" | "macos" | "appimage" | "package">("install_kind"),
   /** Saves editor output (PNG bytes) as `dest`; "replace" sends the original to the trash. */
-  saveEdit: (png: Uint8Array, dest: string, source: string, mode: "copy" | "replace", quality = 92) =>
+  saveEdit: (png: Uint8Array, dest: string, source: string, mode: "copy" | "replace", options: { stripGps?: boolean; quality?: number } = {}) =>
     invoke<EditOutcome>("save_edit", png, {
       headers: {
         "x-dest": encodeURIComponent(dest),
         "x-source": encodeURIComponent(source),
         "x-mode": mode,
-        "x-quality": String(quality),
+        "x-quality": String(options.quality ?? 92),
+        "x-strip-gps": options.stripGps ? "1" : "0",
       },
     }),
   launchPath: () => invoke<string | null>("launch_path"),
