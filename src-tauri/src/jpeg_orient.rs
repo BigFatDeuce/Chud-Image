@@ -247,18 +247,74 @@ pub fn set_orientation(jpeg: &[u8], orientation: u16) -> AppResult<Vec<u8>> {
 
 /// Copies the EXIF block of `source` (if any) into `target`, a freshly encoded JPEG
 /// without EXIF, and resets the orientation to 1 because the pixels are now upright.
-/// Camera, date, GPS… survive an edit this way.
+/// Camera, date, GPS… survive an edit this way. The embedded thumbnail does not: it still
+/// shows the picture before the edit (an area cropped away or painted over would stay
+/// visible in it), so it is wiped. When that cannot be done safely, this fails and the
+/// caller saves without EXIF.
 pub fn transplant_exif(source: &[u8], target: &[u8]) -> AppResult<Vec<u8>> {
     let Ok((Some(seg), _)) = find_exif(source) else { return Ok(target.to_vec()) };
     let (existing, insert_at) = find_exif(target)?;
     if existing.is_some() {
         return set_orientation(target, 1);
     }
-    let mut out = Vec::with_capacity(target.len() + seg.seg_end - seg.seg_start);
+    let mut segment = source[seg.seg_start..seg.seg_end].to_vec();
+    drop_thumbnail(&mut segment[seg.tiff_start - seg.seg_start..])?;
+    let mut out = Vec::with_capacity(target.len() + segment.len());
     out.extend_from_slice(&target[..insert_at]);
-    out.extend_from_slice(&source[seg.seg_start..seg.seg_end]);
+    out.extend_from_slice(&segment);
     out.extend_from_slice(&target[insert_at..]);
     set_orientation(&out, 1)
+}
+
+const TAG_STRIP_OFFSETS: u16 = 0x0111;
+const TAG_STRIP_BYTE_COUNTS: u16 = 0x0117;
+const TAG_THUMB_OFFSET: u16 = 0x0201;
+const TAG_THUMB_LENGTH: u16 = 0x0202;
+
+/// Unlinks IFD1 (the thumbnail directory) from a TIFF block and zeroes the thumbnail
+/// bytes, so that they cannot be found by following the tags nor by scanning the file.
+/// No byte moves: every other offset stays valid.
+fn drop_thumbnail(tiff: &mut [u8]) -> AppResult<()> {
+    let ifd0 = parse_tiff(tiff)?;
+    let e = ifd0.endian;
+    let next_at = ifd0.offset + 2 + ifd0.count * 12;
+    let ifd1 = e.u32(&tiff[next_at..next_at + 4]) as usize;
+    if ifd1 == 0 {
+        return Ok(());
+    }
+    if ifd1 + 2 > tiff.len() {
+        return Err(AppError::corrupt("EXIF IFD1 out of bounds"));
+    }
+    let count = e.u16(&tiff[ifd1..ifd1 + 2]) as usize;
+    if ifd1 + 2 + count * 12 > tiff.len() {
+        return Err(AppError::corrupt("EXIF IFD1 truncated"));
+    }
+    // A single LONG or SHORT value, stored in the entry itself.
+    let value = |tiff: &[u8], tag: u16| -> Option<usize> {
+        (0..count).map(|i| ifd1 + 2 + i * 12).find(|&at| e.u16(&tiff[at..at + 2]) == tag).and_then(|at| {
+            let n = e.u32(&tiff[at + 4..at + 8]);
+            match e.u16(&tiff[at + 2..at + 4]) {
+                4 if n == 1 => Some(e.u32(&tiff[at + 8..at + 12]) as usize),
+                3 if n == 1 => Some(e.u16(&tiff[at + 8..at + 10]) as usize),
+                _ => None,
+            }
+        })
+    };
+    let has = |tiff: &[u8], tag: u16| (0..count).any(|i| e.u16(&tiff[ifd1 + 2 + i * 12..]) == tag);
+    let mut wipe = Vec::new();
+    for (offset_tag, length_tag) in [(TAG_THUMB_OFFSET, TAG_THUMB_LENGTH), (TAG_STRIP_OFFSETS, TAG_STRIP_BYTE_COUNTS)] {
+        match (value(tiff, offset_tag), value(tiff, length_tag)) {
+            (Some(at), Some(len)) if at.checked_add(len).is_some_and(|end| end <= tiff.len()) => wipe.push(at..at + len),
+            // Present but not understood (several strips, bad bounds): don't keep it.
+            _ if has(tiff, offset_tag) => return Err(AppError::corrupt("unexpected EXIF thumbnail layout")),
+            _ => {}
+        }
+    }
+    for range in wipe {
+        tiff[range].fill(0);
+    }
+    tiff[next_at..next_at + 4].copy_from_slice(&e.put_u32(0));
+    Ok(())
 }
 
 fn orientation_ifd_entry(endian: Endian, orientation: u16) -> [u8; 12] {
@@ -366,6 +422,77 @@ pub(crate) mod tests {
             assert_eq!(exif_make(&rotated).as_deref(), Some("\"Chud!\""));
             assert_eq!(pixels(&jpeg), pixels(&rotated));
         }
+    }
+
+    /// A JPEG whose EXIF block has a `Make` tag in IFD0 and `thumb` as IFD1 thumbnail.
+    fn jpeg_with_thumbnail(endian: Endian, thumb: &[u8]) -> Vec<u8> {
+        let base = sample_jpeg();
+        let e = endian;
+        let mut tiff = Vec::new();
+        tiff.extend_from_slice(if e == Endian::Little { b"II" } else { b"MM" });
+        tiff.extend_from_slice(&e.put_u16(42));
+        tiff.extend_from_slice(&e.put_u32(8));
+        // IFD0 at 8: Make → "Chud!" at 26, next IFD at 32.
+        tiff.extend_from_slice(&e.put_u16(1));
+        tiff.extend_from_slice(&e.put_u16(0x010F));
+        tiff.extend_from_slice(&e.put_u16(2));
+        tiff.extend_from_slice(&e.put_u32(6));
+        tiff.extend_from_slice(&e.put_u32(26));
+        tiff.extend_from_slice(&e.put_u32(32));
+        tiff.extend_from_slice(b"Chud!\0");
+        // IFD1 at 32: thumbnail offset + length, thumbnail data at 62.
+        tiff.extend_from_slice(&e.put_u16(2));
+        for (tag, v) in [(TAG_THUMB_OFFSET, 62u32), (TAG_THUMB_LENGTH, thumb.len() as u32)] {
+            tiff.extend_from_slice(&e.put_u16(tag));
+            tiff.extend_from_slice(&e.put_u16(4));
+            tiff.extend_from_slice(&e.put_u32(1));
+            tiff.extend_from_slice(&e.put_u32(v));
+        }
+        tiff.extend_from_slice(&e.put_u32(0));
+        assert_eq!(tiff.len(), 62);
+        tiff.extend_from_slice(thumb);
+        let mut seg = vec![0xFF, 0xE1];
+        seg.extend_from_slice(&((2 + 6 + tiff.len()) as u16).to_be_bytes());
+        seg.extend_from_slice(EXIF_HEADER);
+        seg.extend_from_slice(&tiff);
+        let (_, insert_at) = find_exif(&base).unwrap();
+        let mut out = base[..insert_at].to_vec();
+        out.extend_from_slice(&seg);
+        out.extend_from_slice(&base[insert_at..]);
+        out
+    }
+
+    fn has_thumbnail(jpeg: &[u8]) -> bool {
+        let exif = exif::Reader::new().read_from_container(&mut Cursor::new(jpeg)).unwrap();
+        exif.get_field(exif::Tag::JPEGInterchangeFormat, exif::In::THUMBNAIL).is_some()
+    }
+
+    /// The thumbnail of the unedited photo must not travel into the edited one: it would
+    /// still show what was cropped away or painted over.
+    #[test]
+    fn edits_drop_the_old_embedded_thumbnail() {
+        let thumb = sample_jpeg();
+        for endian in [Endian::Little, Endian::Big] {
+            let source = jpeg_with_thumbnail(endian, &thumb);
+            assert!(has_thumbnail(&source));
+            let edited = transplant_exif(&source, &sample_jpeg()).unwrap();
+            assert!(!has_thumbnail(&edited), "IFD1 still linked");
+            assert!(!edited.windows(thumb.len()).any(|w| w == thumb.as_slice()), "thumbnail bytes still in the file");
+            assert_eq!(exif_make(&edited).as_deref(), Some("\"Chud!\""), "other tags survive");
+            assert_eq!(read_orientation(&edited), 1);
+        }
+    }
+
+    #[test]
+    fn a_thumbnail_it_cannot_locate_means_no_exif_at_all() {
+        let mut source = jpeg_with_thumbnail(Endian::Little, &sample_jpeg());
+        // Point the thumbnail far outside the EXIF block.
+        let tiff = source.windows(6).position(|w| w == EXIF_HEADER).unwrap() + 6;
+        // IFD1 sits at 32 in the TIFF block; its first entry is the thumbnail offset.
+        let at = tiff + 34;
+        assert_eq!(u16::from_le_bytes([source[at], source[at + 1]]), TAG_THUMB_OFFSET);
+        source[at + 8..at + 12].copy_from_slice(&0x00FF_FFFFu32.to_le_bytes());
+        assert!(transplant_exif(&source, &sample_jpeg()).is_err());
     }
 
     #[test]
