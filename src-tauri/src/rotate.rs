@@ -9,8 +9,8 @@ use image::codecs::webp::{WebPDecoder, WebPEncoder};
 use image::{DynamicImage, ImageDecoder, ImageEncoder, ImageFormat, ImageReader};
 use serde::Serialize;
 use std::fs::{self, File};
-use std::io::{BufReader, Cursor, Write};
-use std::path::{Path, PathBuf};
+use std::io::{BufReader, Cursor};
+use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -107,30 +107,7 @@ pub fn rotation_support(path: &Path) -> RotationSupport {
     }
 }
 
-/// Writes `bytes` to `dest` through a temporary file in the same folder followed by a
-/// rename, so a crash or a full disk can never leave a half-written photo behind.
-pub fn atomic_write(dest: &Path, bytes: &[u8]) -> AppResult<()> {
-    let dir = dest.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
-    let name = dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let tmp: PathBuf = dir.join(format!(".{name}.chud-{}.tmp", std::process::id()));
-    let result = (|| -> AppResult<()> {
-        let mut file = File::create(&tmp)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        if let Ok(meta) = fs::metadata(dest) {
-            if meta.permissions().readonly() {
-                return Err(AppError::new(ErrorCode::PermissionDenied, "file is read-only"));
-            }
-        }
-        fs::rename(&tmp, dest)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    result
-}
+pub use crate::safe_write::atomic_write;
 
 /// Saves `src` rotated by `turns` clockwise quarter turns into `dest` (or over `src`).
 pub fn save_rotation(src: &Path, turns: i32, dest: Option<&Path>) -> AppResult<SaveOutcome> {
@@ -296,15 +273,5 @@ mod tests {
         let err = save_rotation(&path, 1, None).unwrap_err();
         assert_eq!(err.code, ErrorCode::ReadOnlyFormat);
         assert_eq!(fs::read_to_string(&path).unwrap(), "<svg xmlns='http://www.w3.org/2000/svg'/>");
-    }
-
-    #[test]
-    fn atomic_write_leaves_no_temp_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("f.bin");
-        fs::write(&path, b"old").unwrap();
-        atomic_write(&path, b"new").unwrap();
-        assert_eq!(fs::read(&path).unwrap(), b"new");
-        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 }

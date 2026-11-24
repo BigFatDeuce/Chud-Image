@@ -13,6 +13,7 @@ mod jpeg_orient;
 mod metadata;
 mod raw;
 mod rotate;
+mod safe_write;
 mod settings;
 #[cfg(windows)]
 mod wic;
@@ -51,13 +52,23 @@ async fn supported_extensions() -> Vec<String> {
 
 #[tauri::command]
 async fn open_target(path: String) -> AppResult<folder::FolderListing> {
-    blocking(move || folder::open_target(Path::new(&path))).await
+    blocking(move || {
+        let target = Path::new(&path);
+        let dir = if target.is_dir() { Some(target) } else { target.parent() };
+        if let Some(dir) = dir {
+            edit::recover_interrupted(dir, edit::RECOVERY_DELAY);
+        }
+        folder::open_target(target)
+    })
+    .await
 }
 
 #[tauri::command]
 async fn list_folder(folder: String) -> AppResult<Vec<String>> {
     blocking(move || {
-        Ok(folder::list_images(Path::new(&folder))?.iter().map(|p| p.display().to_string()).collect())
+        let dir = Path::new(&folder);
+        edit::recover_interrupted(dir, edit::RECOVERY_DELAY);
+        Ok(folder::list_images(dir)?.iter().map(|p| p.display().to_string()).collect())
     })
     .await
 }

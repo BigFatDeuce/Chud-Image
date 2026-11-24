@@ -2,17 +2,18 @@
 //!
 //! The editor renders the result in the web view and hands over a lossless PNG; this
 //! module re-encodes it in the format of the destination file. "Replace the original"
-//! never destroys anything: the new file is fully written first, then the original goes
-//! to the Recycle Bin / Trash, then the new file takes its name.
+//! never destroys anything: the new file is fully written and flushed first, then the
+//! original goes to the Recycle Bin / Trash, then the new file takes its name.
 
 use crate::error::{AppError, AppResult, ErrorCode};
 use crate::formats::extension_of;
-use crate::{files, jpeg_orient, rotate};
+use crate::{files, jpeg_orient, rotate, safe_write};
 use image::codecs::jpeg::JpegEncoder;
 use image::{DynamicImage, ImageFormat, Rgb, RgbImage};
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// Extensions the editor can write. Everything else (RAW, HEIC, AVIF, SVG…) can only be
 /// saved as a copy in one of these.
@@ -90,42 +91,73 @@ pub fn save(dest: &Path, png: &[u8], source: Option<&Path>, mode: SaveMode, qual
     let bytes = encode_for(dest, png, source, quality)?;
     match mode {
         SaveMode::Copy => {
-            rotate::atomic_write(dest, &bytes)?;
+            safe_write::atomic_write(dest, &bytes)?;
             Ok(EditOutcome { path: dest.display().to_string(), trashed: false })
         }
-        SaveMode::ReplaceOriginal => {
-            if !dest.is_file() {
-                return Err(AppError::new(ErrorCode::NotFound, dest.display().to_string()));
-            }
-            if fs::metadata(dest)?.permissions().readonly() {
-                return Err(AppError::new(ErrorCode::PermissionDenied, "file is read-only"));
-            }
-            // 1. The new picture is complete on disk before anything else happens.
-            let staged = staging_path(dest);
-            fs::write(&staged, &bytes)?;
-            // 2. The original goes to the trash; if that fails nothing has changed.
-            if let Err(e) = files::move_to_trash(dest) {
-                let _ = fs::remove_file(&staged);
-                return Err(e);
-            }
-            // 3. The edit takes the original's name.
-            if let Err(e) = fs::rename(&staged, dest) {
-                // Extremely unlikely (same folder); leave the staged file for the user.
-                return Err(AppError::new(
-                    ErrorCode::Io,
-                    format!("{e} — the edited picture was kept as {}", staged.display()),
-                ));
-            }
-            Ok(EditOutcome { path: dest.display().to_string(), trashed: true })
-        }
+        SaveMode::ReplaceOriginal => replace_original(dest, &bytes, files::move_to_trash),
     }
 }
 
-fn staging_path(dest: &Path) -> PathBuf {
-    let dir = dest.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
-    let stem = dest.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    let ext = extension_of(dest);
-    dir.join(format!(".{stem}.chud-edit-{}.{ext}", std::process::id()))
+/// "Replace the original": the edit is written and flushed under a hidden name, the
+/// original goes to the trash, then the edit takes its name. Should the app die between
+/// the last two steps, [`recover_interrupted`] finishes the job the next time the folder
+/// is opened, so the picture never stays missing.
+fn replace_original(dest: &Path, bytes: &[u8], trash: impl FnOnce(&Path) -> AppResult<()>) -> AppResult<EditOutcome> {
+    if !dest.is_file() {
+        return Err(AppError::new(ErrorCode::NotFound, dest.display().to_string()));
+    }
+    if fs::metadata(dest)?.permissions().readonly() {
+        return Err(AppError::new(ErrorCode::PermissionDenied, "file is read-only"));
+    }
+    // 1. The new picture is complete and on the disk before anything else happens.
+    let staged = safe_write::stage(dest, bytes, safe_write::EDIT_TAG)?;
+    // 2. The original goes to the trash; if that fails nothing has changed.
+    if let Err(e) = trash(dest) {
+        let _ = fs::remove_file(&staged);
+        return Err(e);
+    }
+    // 3. The edit takes the original's name.
+    if let Err(e) = fs::rename(&staged, dest) {
+        // Extremely unlikely (same folder); the edit is kept and the recovery puts it in
+        // place the next time the folder is opened.
+        return Err(AppError::new(
+            ErrorCode::Io,
+            format!("{e} — the edited picture was kept as {}", staged.display()),
+        ));
+    }
+    safe_write::sync_folder(dest);
+    Ok(EditOutcome { path: dest.display().to_string(), trashed: true })
+}
+
+/// Staged edits younger than this may belong to a save still in progress.
+pub const RECOVERY_DELAY: Duration = Duration::from_secs(120);
+
+/// Puts back pictures left missing by an interrupted "replace the original": a staged
+/// edit whose original is gone (already in the trash) is renamed to the original's name.
+/// Staged files whose original is still there are left alone: that save never got as
+/// far as touching the original. Returns the pictures restored.
+pub fn recover_interrupted(dir: &Path, min_age: Duration) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(dir) else { return Vec::new() };
+    let mut restored = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(target_name) = safe_write::edit_target_name(&name) else { continue };
+        let Ok(meta) = entry.metadata() else { continue };
+        let old_enough = meta.modified().ok().and_then(|m| m.elapsed().ok()).is_some_and(|age| age >= min_age);
+        if !meta.is_file() || !old_enough {
+            continue;
+        }
+        let target = dir.join(&target_name);
+        // `symlink_metadata`: a dangling link still counts as "there".
+        if fs::symlink_metadata(&target).is_ok() {
+            continue;
+        }
+        if fs::rename(entry.path(), &target).is_ok() {
+            safe_write::sync_folder(&target);
+            restored.push(target);
+        }
+    }
+    restored
 }
 
 #[cfg(test)]
@@ -186,5 +218,72 @@ mod tests {
         let err = save(&dest, &png_bytes(4, 4, 255), None, SaveMode::ReplaceOriginal, 90).unwrap_err();
         assert_eq!(err.code, ErrorCode::NotFound);
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0, "no staged file left behind");
+    }
+
+    #[test]
+    fn replacing_puts_the_edit_in_place_and_the_original_in_the_trash() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("photo.png");
+        fs::write(&dest, b"original").unwrap();
+        let out = replace_original(&dest, b"edited", |p| Ok(fs::rename(p, bin.path().join("photo.png"))?)).unwrap();
+        assert!(out.trashed);
+        assert_eq!(fs::read(&dest).unwrap(), b"edited");
+        assert_eq!(fs::read(bin.path().join("photo.png")).unwrap(), b"original");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1, "no staged file left behind");
+    }
+
+    #[test]
+    fn a_failing_trash_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("photo.png");
+        fs::write(&dest, b"original").unwrap();
+        let err = replace_original(&dest, b"edited", |_| Err(AppError::new(ErrorCode::TrashUnavailable, "no trash"))).unwrap_err();
+        assert_eq!(err.code, ErrorCode::TrashUnavailable);
+        assert_eq!(fs::read(&dest).unwrap(), b"original");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1, "no staged file left behind");
+    }
+
+    /// Regression IMG-01: the app dies right after the original went to the trash.
+    #[test]
+    fn an_interrupted_replace_is_finished_when_the_folder_is_opened_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("photo.png");
+        fs::write(&dest, b"original").unwrap();
+        // Steps 1 and 2 of `replace_original`, then the "crash".
+        let staged = safe_write::stage(&dest, b"edited", safe_write::EDIT_TAG).unwrap();
+        fs::rename(&dest, bin.path().join("photo.png")).unwrap();
+        assert!(!dest.exists());
+
+        // A save that might still be running is not touched...
+        assert!(recover_interrupted(dir.path(), RECOVERY_DELAY).is_empty());
+        assert!(staged.exists());
+        // ...an old one is completed.
+        assert_eq!(recover_interrupted(dir.path(), Duration::ZERO), vec![dest.clone()]);
+        assert_eq!(fs::read(&dest).unwrap(), b"edited");
+        assert!(!staged.exists());
+    }
+
+    #[test]
+    fn recovery_never_overwrites_an_existing_picture() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("photo.jpg");
+        fs::write(&dest, b"current").unwrap();
+        let staged = safe_write::stage(&dest, b"stale edit", safe_write::EDIT_TAG).unwrap();
+        // The 1.2 naming too.
+        let legacy = dir.path().join(".photo.chud-edit-42.jpg");
+        fs::write(&legacy, b"older edit").unwrap();
+        assert!(recover_interrupted(dir.path(), Duration::ZERO).is_empty());
+        assert_eq!(fs::read(&dest).unwrap(), b"current");
+        assert!(staged.exists() && legacy.exists());
+    }
+
+    #[test]
+    fn recovery_understands_the_1_2_staging_names() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".photo.chud-edit-42.jpg"), b"edit").unwrap();
+        assert_eq!(recover_interrupted(dir.path(), Duration::ZERO), vec![dir.path().join("photo.jpg")]);
+        assert_eq!(fs::read(dir.path().join("photo.jpg")).unwrap(), b"edit");
     }
 }
