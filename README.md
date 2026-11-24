@@ -22,6 +22,18 @@ No library to import, no account, no cloud.
 
 ## What's new
 
+### 1.3
+
+- **Move what you added** in the editor: drag texts and drawings, which snap to the edges and
+  centre of the picture, nudge them pixel by pixel with the arrow keys, recolour or resize them,
+  double-click a text to change it. Text no longer shifts when you press Enter.
+- **Remove the GPS location** when saving an edit, offered for photos that record where they were taken.
+- **Safer saving:** a "replace the original" interrupted by a crash or power cut is finished the
+  next time the folder is opened, and edited JPEGs no longer carry the old embedded thumbnail
+  (which still showed what had been cropped or painted over).
+- **Fixed:** a locked crop ratio was lost at the smallest size; "Save as" at the root of a drive;
+  a stalled model download could not be cancelled.
+
 ### 1.2
 
 - **Background removal** in the editor, with an adjustable threshold and a transparent preview.
@@ -58,7 +70,7 @@ The old **E-mail** and **Burn** buttons are gone. Nobody misses them.
 | **Glitch transition** | Moving to the next photo plays a short WebGL glitch: slices tear, RGB channels split, blocks of the new picture bleed through. It can be switched to a fade, or off, in Settings. Respects "reduce motion". |
 | **Smooth zoom** | Zoom follows the cursor, with drag to pan, and soft magnets at "fit" and "100%". It runs from 10% of the fit size up to 3200%. Double-click toggles fit / actual size. |
 | **Rotation that's safe** | Rotating is a *pending* change until you press `Ctrl+S`. JPEGs are rotated **losslessly** by rewriting the EXIF orientation tag, so pixels are never re-encoded. PNG / BMP / TIFF / WebP-lossless are re-encoded without quality loss after asking. Writes are atomic (temp file + rename). |
-| **Quick edits** | `E` opens a simple editor: crop (free or 1:1, 4:3, 16:9…), rotate and mirror, brightness / contrast / saturation / warmth / vignette, one-click filters, pen, highlighter, lines, arrows, boxes, circles and text (with an optional outline). Texts and drawings can be picked up again afterwards: drag them (they snap to the picture's edges and centre), nudge them pixel by pixel with the arrow keys, recolour or resize them, double-click a text to change it. Everything can be undone. Save a copy under a new name, or replace the original, which then goes to the Recycle Bin / Trash so nothing is lost. |
+| **Quick edits** | `E` opens a simple editor: crop (free or 1:1, 4:3, 16:9…), rotate and mirror, brightness / contrast / saturation / warmth / vignette, one-click filters, pen, highlighter, lines, arrows, boxes, circles and text (with an optional outline). Texts and drawings can be picked up again afterwards: drag them (they snap to the picture's edges and centre), nudge them pixel by pixel with the arrow keys, recolour or resize them, double-click a text to change it. Everything can be undone. Save a copy under a new name, or replace the original, which then goes to the Recycle Bin / Trash so nothing is lost. The GPS location can be left out of the saved file. |
 | **Background removal** | Optional, in the editor. Cuts out the subject with an adjustable threshold and saves it with transparency (PNG/WebP/TIFF). It uses an AI model that is **not** shipped with the app: one click downloads it once (BiRefNet lite, 224 MB, MIT license, checked against a SHA-256; on Linux the 11 MB ONNX Runtime library from Microsoft comes with it), and it then runs entirely on your computer. Pictures are never uploaded. The model can be deleted from the same panel. |
 | **Slideshow** | `F5` or the play orb. Fullscreen, configurable interval, optional loop, `Esc` to leave. |
 | **Fullscreen** | `F11`. The toolbar floats and hides itself along with the cursor. |
