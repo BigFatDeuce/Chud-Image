@@ -4,3 +4,9 @@ src-tauri/target
 src-tauri/gen/schemas
 *.log
 .DS_Store
+
+# Local assistant notes, never published
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md

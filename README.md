@@ -221,3 +221,8 @@ Built with Tauri, React, the `image` crate, `kamadak-exif`, `trash` and ONNX Run
 The optional background-removal model is BiRefNet by Zheng Peng et al. (MIT), downloaded on request.
 The dog in the editor screenshots is "Portrait of a labrador retriever" by Dktue,
 [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Portrait_of_a_labrador_retriever.jpg), CC0.
+
+## License
+
+© 2026 BigFatDeuce. The code is free software under the [GPL-3.0-or-later](LICENSE): you can use, study, share and modify it, and versions you distribute must stay under the same licence.
+Third-party components keep their own licenses.
