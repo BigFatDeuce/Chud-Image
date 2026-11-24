@@ -27,7 +27,7 @@ import {
   type Settings,
 } from "./lib/api";
 import { I18nContext, makeTranslator, resolveLang, type Key } from "./lib/i18n";
-import { dirName, extension, fileName, indexAfterRemoval, relocate, stepIndex } from "./lib/nav";
+import { dirName, extension, fileName, indexAfterRemoval, joinPath, relocate, sameFolder, stepIndex } from "./lib/nav";
 import { printImage, type PrintOptions } from "./lib/print";
 import { actionFor, isTypingTarget, type Action } from "./lib/shortcuts";
 import type { Size } from "./lib/zoom";
@@ -415,7 +415,7 @@ export default function App() {
           showToast(out.method === "lossless" ? t("toast.savedLossless") : t("toast.saved"));
         } else {
           showToast(t("toast.savedCopy", { name: fileName(dest) }));
-          if (folder && dirName(dest) === folder) {
+          if (folder && sameFolder(dirName(dest), folder)) {
             api.listFolder(folder).then((list) => {
               setFiles(list);
               setIndex(relocate(list, pathRef.current, index));
@@ -445,7 +445,7 @@ export default function App() {
         const ext = extension(p);
         const base = fileName(p).replace(/\.[^.]+$/, "");
         const dest = await saveDialog({
-          defaultPath: `${dirName(p)}/${base}${q ? "-rotated" : "-copy"}.${ext}`,
+          defaultPath: joinPath(dirName(p), `${base}${q ? "-rotated" : "-copy"}.${ext}`),
           filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
         });
         if (dest) await doSave(p, q, dest);

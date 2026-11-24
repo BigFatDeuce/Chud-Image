@@ -32,14 +32,40 @@ export function relocate(files: string[], path: string | null, previousIndex: nu
   return Math.min(Math.max(previousIndex, 0), files.length - 1);
 }
 
+/**
+ * POSIX paths (starting with "/") only use "/" as a separator: a backslash is a legal
+ * character in a Linux file name. Everything else is treated as a Windows path.
+ */
+const isPosix = (path: string) => path.startsWith("/");
+const lastSep = (path: string) => (isPosix(path) ? path.lastIndexOf("/") : Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")));
+
 export function fileName(path: string): string {
-  const parts = path.split(/[\\/]/);
-  return parts[parts.length - 1] || path;
+  return path.slice(lastSep(path) + 1) || path;
 }
 
+/** The folder holding `path`, keeping roots whole ("/", "C:\") and "." for a bare name. */
 export function dirName(path: string): string {
-  const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return i > 0 ? path.slice(0, i) : path;
+  const i = lastSep(path);
+  if (i < 0) return ".";
+  if (i === 0) return path[0];
+  // "C:\photo.jpg" → "C:\", not the drive-relative "C:".
+  if (i === 2 && path[1] === ":") return path.slice(0, 3);
+  return path.slice(0, i);
+}
+
+/** Appends a file name to a folder without doubling the separator. */
+export function joinPath(dir: string, name: string): string {
+  if (dir === "" || dir === ".") return name;
+  if (/[\\/]$/.test(dir)) return dir + name;
+  return dir + (isPosix(dir) || (!dir.includes("\\") && dir.includes("/")) ? "/" : "\\") + name;
+}
+
+/** Whether two folder paths name the same folder, ignoring a trailing separator. */
+export function sameFolder(a: string, b: string): boolean {
+  const norm = (p: string) => (p.length > 1 && /[\\/]$/.test(p) && !/^[A-Za-z]:[\\/]$/.test(p) ? p.slice(0, -1) : p);
+  const x = norm(a);
+  const y = norm(b);
+  return isPosix(x) ? x === y : x.toLowerCase() === y.toLowerCase();
 }
 
 export function extension(path: string): string {
