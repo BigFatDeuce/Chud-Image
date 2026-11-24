@@ -13,6 +13,7 @@ import {
   Highlighter,
   LoaderCircle,
   Minus,
+  MousePointer2,
   MoveUpRight,
   Redo2,
   Replace,
@@ -32,9 +33,10 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { ConfirmDialog } from "../components/Modal";
 import { api, toAppError, type AppError, type BgModelStatus } from "../lib/api";
 import { useI18n, type Key } from "../lib/i18n";
-import { dirName, extension, fileName } from "../lib/nav";
+import { dirName, extension, fileName, joinPath } from "../lib/nav";
 import {
   ALPHA_EXTENSIONS,
+  annotationBounds,
   applyAdjust,
   applyMask,
   cropRect,
@@ -51,23 +53,31 @@ import {
   initialState,
   isNeutral,
   isPristine,
+  keepInFrame,
   NEUTRAL,
   orientedSize,
+  pickAnnotation,
   renderFull,
   rotateState,
+  roughMeasure,
+  snapMove,
   TEXT_FONT,
+  TEXT_LINE_HEIGHT,
+  textLayout,
+  translateAnnotation,
   type Adjust,
   type Annotation,
   type EditState,
   type FilterId,
   type Handle,
+  type Measure,
   type Pt,
   type Rect,
   type Size,
 } from "./model";
 
 type Tool = "crop" | "adjust" | "filters" | "draw" | "text" | "background";
-type DrawMode = "pen" | "marker" | "line" | "arrow" | "rect" | "ellipse" | "eraser";
+type DrawMode = "select" | "pen" | "marker" | "line" | "arrow" | "rect" | "ellipse" | "eraser";
 
 /** Formats the editor can write back; anything else is saved as a copy (PNG by default). */
 export const WRITABLE_EXTENSIONS = new Set(["jpg", "jpeg", "jpe", "jfif", "png", "webp", "bmp", "tif", "tiff", "gif", "tga", "qoi"]);
@@ -125,6 +135,32 @@ export interface EditorProps {
   onError: (error: AppError | string) => void;
 }
 
+type TextAnnotation = Annotation & { kind: "text" };
+
+/** Text being typed: a new one, or an existing one (`index`) being changed in place. */
+interface TextEdit {
+  at: Pt;
+  value: string;
+  index?: number;
+  /** Style of the existing text being changed (picture pixels for the size). */
+  color?: string;
+  size?: number;
+  outline?: number;
+}
+
+/** Text is measured with the real font on a small offscreen canvas. */
+let measureCtx: CanvasRenderingContext2D | null = null;
+const measureText: Measure = (a) => {
+  measureCtx ??= document.createElement("canvas").getContext("2d");
+  return measureCtx ? textLayout(measureCtx, a) : roughMeasure(a);
+};
+
+const clampInt = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Math.round(v)));
+const isMarker = (a: Annotation) => a.kind === "pen" && a.opacity < 1;
+/** Pixels on screen within which the pointer grabs a line, and guides attract. */
+const GRAB = 6;
+const SNAP = 8;
+
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -154,7 +190,11 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
   const [draft, setDraft] = useState<Annotation | null>(null);
   const draftRef = useRef(draft);
   draftRef.current = draft;
-  const [textEdit, setTextEdit] = useState<{ at: Pt; value: string } | null>(null);
+  const [textEdit, setTextEdit] = useState<TextEdit | null>(null);
+  // The annotation picked to be moved or restyled (index in the current state).
+  const [selected, setSelected] = useState<number | null>(null);
+  const [guides, setGuides] = useState<{ x: number[]; y: number[] } | null>(null);
+  const [hoverMovable, setHoverMovable] = useState(false);
   const [saveMenu, setSaveMenu] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirm, setConfirm] = useState<null | "replace" | "discard">(null);
@@ -170,7 +210,13 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const liveSnapshot = useRef<EditState | null>(null);
-  const drag = useRef<null | { kind: "crop"; handle: Handle; start: Rect; origin: Pt } | { kind: "draw" } | { kind: "erase" }>(null);
+  const drag = useRef<
+    | null
+    | { kind: "crop"; handle: Handle; start: Rect; origin: Pt }
+    | { kind: "draw" }
+    | { kind: "erase" }
+    | { kind: "move"; index: number; start: Annotation; origin: Pt; box: Rect; moved: boolean }
+  >(null);
   const baseCache = useRef<{ key: string; canvas: HTMLCanvasElement } | null>(null);
   const rawCache = useRef<{ key: string; data: ImageData } | null>(null);
 
@@ -213,9 +259,11 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
   }, []);
 
   const undo = useCallback(() => {
+    setSelected(null);
     setHist((h) => (h.past.length ? { past: h.past.slice(0, -1), present: h.past[h.past.length - 1], future: [h.present, ...h.future] } : h));
   }, []);
   const redo = useCallback(() => {
+    setSelected(null);
     setHist((h) => (h.future.length ? { past: [...h.past, h.present], present: h.future[0], future: h.future.slice(1) } : h));
   }, []);
 
@@ -322,6 +370,7 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
   };
 
   // ---------------------------------------------------------------- rendering
+  const editingIndex = textEdit?.index ?? -1;
   const paint = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas || !source || scale <= 0) return;
@@ -368,10 +417,10 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
     ctx.save();
     ctx.scale(k, k);
     ctx.translate(-region.x, -region.y);
-    for (const a of state.annotations) drawAnnotation(ctx, a);
+    state.annotations.forEach((a, i) => i !== editingIndex && drawAnnotation(ctx, a));
     if (draft) drawAnnotation(ctx, draft);
     ctx.restore();
-  }, [source, srcSize, state, region.x, region.y, region.w, region.h, scale, view.w, view.h, draft, tool, crop, maskCanvas, threshold]);
+  }, [source, srcSize, state, region.x, region.y, region.w, region.h, scale, view.w, view.h, draft, tool, crop, maskCanvas, threshold, editingIndex]);
 
   useEffect(() => {
     const id = requestAnimationFrame(paint);
@@ -419,18 +468,8 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
   const eraseAt = useCallback(
     (p: Pt) => {
       const r = 10 / scale;
-      const ctx = canvasRef.current?.getContext("2d");
-      const measure = (a: Annotation & { kind: "text" }) => {
-        if (!ctx) return { w: a.text.length * a.size * 0.6, h: a.size * 1.2 };
-        ctx.save();
-        ctx.font = TEXT_FONT(a.size);
-        const lines = a.text.split("\n");
-        const w = Math.max(...lines.map((l) => ctx.measureText(l).width));
-        ctx.restore();
-        return { w, h: lines.length * a.size * 1.2 };
-      };
       setHist((h) => {
-        const kept = h.present.annotations.filter((a) => !hitAnnotation(a, p, r, measure));
+        const kept = h.present.annotations.filter((a) => !hitAnnotation(a, p, r, measureText));
         if (kept.length === h.present.annotations.length) return h;
         if (!liveSnapshot.current) liveSnapshot.current = h.present;
         return { ...h, present: { ...h.present, annotations: kept } };
@@ -439,18 +478,73 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
     [scale],
   );
 
+  // ---------------------------------------------------------------- selecting & moving
+  const sel = selected !== null && selected < state.annotations.length ? selected : null;
+  const selAnn = sel !== null ? state.annotations[sel] : null;
+  const selecting = tool === "draw" && drawMode === "select";
+  // The text tool grabs texts; the selection mode of the drawing tool grabs anything.
+  const movable = tool === "text" ? (a: Annotation) => a.kind === "text" : selecting ? () => true : null;
+  const pickAt = (p: Pt) => (movable ? pickAnnotation(state.annotations, p, GRAB / scale, measureText, movable) : -1);
+
+  useEffect(() => {
+    setSelected(null);
+    setHoverMovable(false);
+  }, [tool, drawMode]);
+
+  /** Selects an annotation and shows its style in the panel. */
+  const select = (i: number) => {
+    const a = state.annotations[i];
+    setSelected(i);
+    setColor(a.color);
+    if (a.kind === "text") {
+      setTextSize(clampInt(a.size * scale, 12, 120));
+      setTextOutline(!!a.outline);
+      if (a.outline) setOutlineOpacity(clampInt(a.outline * 100, 5, 100));
+    } else {
+      setBrush(clampInt((isMarker(a) ? a.size / 3 : a.size) * scale, 1, 40));
+    }
+  };
+
+  /** Changes the selected annotation; `gesture` keeps a slider drag as one undo step. */
+  const restyle = (f: (a: Annotation) => Annotation, gesture = false) => {
+    if (sel === null) return;
+    const update = (s: EditState) => ({ ...s, annotations: s.annotations.map((a, i) => (i === sel ? f(a) : a)) });
+    if (gesture) live(update);
+    else commit(update);
+  };
+
+  const pickColor = (c: string) => {
+    setColor(c);
+    if (textEdit?.index !== undefined) setTextEdit((te) => (te ? { ...te, color: c } : te));
+    else restyle((a) => ({ ...a, color: c }));
+  };
+
   const onStageDown = (e: ReactPointerEvent) => {
     if (!source || e.button !== 0) return;
-    if (tool === "text") {
+    const p = toImage(e);
+    if (movable) {
       e.preventDefault();
-      commitText();
-      setTextEdit({ at: toImage(e), value: "" });
+      if (tool === "text") commitText();
+      const hit = pickAt(p);
+      if (hit >= 0) {
+        // Grab it: it follows the pointer from the exact point where it was taken.
+        select(hit);
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        const a = state.annotations[hit];
+        drag.current = { kind: "move", index: hit, start: a, origin: p, box: annotationBounds(a, measureText), moved: false };
+        return;
+      }
+      // A click beside the selection only drops it; otherwise the text tool starts a new text.
+      if (sel !== null || tool !== "text") {
+        setSelected(null);
+        return;
+      }
+      setTextEdit({ at: p, value: "" });
       return;
     }
     if (tool !== "draw") return;
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    const p = toImage(e);
     const size = brush / scale;
     if (drawMode === "eraser") {
       drag.current = { kind: "erase" };
@@ -459,16 +553,54 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
       drag.current = { kind: "draw" };
       const marker = drawMode === "marker";
       setDraft({ kind: "pen", points: [p], color, size: marker ? size * 3 : size, opacity: marker ? 0.38 : 1 });
-    } else {
+    } else if (drawMode !== "select") {
       drag.current = { kind: "draw" };
       setDraft({ kind: drawMode, a: p, b: p, color, size });
     }
   };
 
+  const moveSelection = (d: { index: number; start: Annotation; origin: Pt; box: Rect; moved: boolean }, e: ReactPointerEvent) => {
+    const p = toImage(e);
+    let dx = p[0] - d.origin[0];
+    let dy = p[1] - d.origin[1];
+    // A small dead zone, so that clicking to select never nudges anything.
+    if (!d.moved && Math.hypot(dx, dy) * scale < 3) return;
+    d.moved = true;
+    // Shift: along one axis only.
+    const lock = e.shiftKey ? (Math.abs(dx) >= Math.abs(dy) ? "y" : "x") : null;
+    if (lock === "x") dx = 0;
+    if (lock === "y") dy = 0;
+    let g: { x: number[]; y: number[] } = { x: [], y: [] };
+    // Edges and centre snap to the picture's; Alt moves freely.
+    if (!e.altKey) {
+      const snap = snapMove(d.box, dx, dy, region, SNAP / scale);
+      if (lock !== "x") {
+        dx = snap.dx;
+        g.x = snap.guides.x;
+      }
+      if (lock !== "y") {
+        dy = snap.dy;
+        g.y = snap.guides.y;
+      }
+    }
+    const [kx, ky] = keepInFrame(d.box, dx, dy, region, 16 / scale);
+    if (kx !== dx) g = { ...g, x: [] };
+    if (ky !== dy) g = { ...g, y: [] };
+    setGuides(g.x.length || g.y.length ? g : null);
+    live((s) => ({ ...s, annotations: s.annotations.map((a, i) => (i === d.index ? translateAnnotation(d.start, kx, ky) : a)) }));
+  };
+
   const onStageMove = (e: ReactPointerEvent) => {
     const d = drag.current;
-    if (!d) return;
+    if (!d) {
+      if (movable && source && scale > 0 && canvasRef.current) {
+        const over = pickAt(toImage(e)) >= 0;
+        if (over !== hoverMovable) setHoverMovable(over);
+      }
+      return;
+    }
     if (d.kind === "crop") return onCropMove(e);
+    if (d.kind === "move") return moveSelection(d, e);
     const p = toImage(e);
     if (d.kind === "erase") return eraseAt(p);
     setDraft((a) => {
@@ -503,13 +635,32 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
     drag.current = null;
     if (!d) return;
     if (d.kind === "crop") return onCropUp();
-    if (d.kind === "erase") return endLive();
+    if (d.kind === "erase") {
+      setSelected(null);
+      return endLive();
+    }
+    if (d.kind === "move") {
+      setGuides(null);
+      if (d.moved) endLive();
+      return;
+    }
     const a = draftRef.current;
     setDraft(null);
     if (a) {
       const tiny = a.kind !== "pen" && a.kind !== "text" && Math.hypot(a.b[0] - a.a[0], a.b[1] - a.a[1]) * scale < 3;
       if (!tiny) commit((s) => ({ ...s, annotations: [...s.annotations, a] }));
     }
+  };
+
+  /** Double-click on a text: change its words in place. */
+  const onStageDoubleClick = (e: ReactPointerEvent | React.MouseEvent) => {
+    if (!movable || !source) return;
+    const i = pickAnnotation(state.annotations, toImage(e), GRAB / scale, measureText, (a) => a.kind === "text");
+    if (i < 0) return;
+    const a = state.annotations[i] as TextAnnotation;
+    if (tool !== "text") setTool("text");
+    setSelected(null);
+    setTextEdit({ at: a.at, value: a.text, index: i, color: a.color, size: a.size, outline: a.outline });
   };
 
   // ---------------------------------------------------------------- text
@@ -520,6 +671,19 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
     textRef.current = null;
     if (!te) return;
     setTextEdit(null);
+    const index = te.index;
+    if (index !== undefined) {
+      // An existing text: same place in the stack, emptied = removed.
+      commit((s) => {
+        const old = s.annotations[index];
+        if (old?.kind !== "text") return s;
+        if (!te.value.trim()) return { ...s, annotations: s.annotations.filter((_, i) => i !== index) };
+        const next: TextAnnotation = { ...old, text: te.value, color: te.color ?? old.color, size: te.size ?? old.size, outline: te.outline ?? old.outline };
+        if (JSON.stringify(next) === JSON.stringify(old)) return s;
+        return { ...s, annotations: s.annotations.map((a, i) => (i === index ? next : a)) };
+      });
+      return;
+    }
     if (te.value.trim()) {
       const size = textSize / Math.max(scale, 0.0001);
       const outline = textOutline ? outlineOpacity / 100 : 0;
@@ -559,9 +723,8 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
     // A cut-out subject needs a format that keeps transparency.
     const outExt = WRITABLE_EXTENSIONS.has(ext) && (!state.bg || ALPHA_EXTENSIONS.has(ext)) ? ext : "png";
     const stem = fileName(path).replace(/\.[^.]+$/, "");
-    const sep = path.includes("\\") ? "\\" : "/";
     const chosen = await saveDialog({
-      defaultPath: `${dirName(path)}${sep}${stem}-edit.${outExt}`,
+      defaultPath: joinPath(dirName(path), `${stem}-edit.${outExt}`),
       filters: [
         { name: "JPEG", extensions: ["jpg", "jpeg"] },
         { name: "PNG", extensions: ["png"] },
@@ -588,6 +751,29 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
       const target = e.target as HTMLElement | null;
       if (target?.closest(".editor-text-input")) return;
       const mod = e.ctrlKey || e.metaKey;
+      const typing = !!target?.closest("input, textarea, select");
+      if (sel !== null && !mod && !typing) {
+        const step = (e.shiftKey ? 10 : 1) / Math.max(scale, 0.0001);
+        const arrows: Record<string, Pt> = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
+        if (arrows[e.key]) {
+          // Arrows: move by one screen pixel (Shift: ten); a held key is one undo step.
+          e.preventDefault();
+          const [dx, dy] = arrows[e.key];
+          live((s) => ({ ...s, annotations: s.annotations.map((a, i) => (i === sel ? translateAnnotation(a, dx, dy) : a)) }));
+          return;
+        }
+        if (e.key === "Delete" || e.key === "Backspace") {
+          e.preventDefault();
+          setSelected(null);
+          commit((s) => ({ ...s, annotations: s.annotations.filter((_, i) => i !== sel) }));
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setSelected(null);
+          return;
+        }
+      }
       if (mod && e.code === "KeyZ" && !e.shiftKey) {
         e.preventDefault();
         undo();
@@ -603,9 +789,16 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
         else requestClose();
       }
     };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key.startsWith("Arrow")) endLive();
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [confirm, saving, saveMenu, undo, redo, requestClose]);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [confirm, saving, saveMenu, undo, redo, requestClose, sel, scale, live, endLive, commit]);
 
   // ---------------------------------------------------------------- UI pieces
   const adjust = state.adjust;
@@ -621,6 +814,7 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
   ];
 
   const drawModes: { id: DrawMode; icon: typeof Crop; label: Key }[] = [
+    { id: "select", icon: MousePointer2, label: "ed.select" },
     { id: "pen", icon: Brush, label: "ed.pen" },
     { id: "marker", icon: Highlighter, label: "ed.marker" },
     { id: "line", icon: Minus, label: "ed.line" },
@@ -635,10 +829,10 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
       <span className="ed-label">{t("ed.color")}</span>
       <div className="ed-swatches">
         {COLORS.map((c) => (
-          <button key={c} className={`ed-swatch${color === c ? " on" : ""}`} style={{ "--sw": c } as CSSProperties} onClick={() => setColor(c)} aria-label={c} />
+          <button key={c} className={`ed-swatch${color === c ? " on" : ""}`} style={{ "--sw": c } as CSSProperties} onClick={() => pickColor(c)} aria-label={c} />
         ))}
         <label className={`ed-swatch ed-swatch-custom${COLORS.includes(color) ? "" : " on"}`} style={{ "--sw": color } as CSSProperties}>
-          <input type="color" value={color} onChange={(e) => setColor(e.target.value)} />
+          <input type="color" value={color} onChange={(e) => pickColor(e.target.value)} />
         </label>
       </div>
     </div>
@@ -683,17 +877,17 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
         </div>
         <div className="ed-field">
           <div className="ed-row">
-            <button className="ed-icon-btn" onClick={() => commit((s) => rotateState(s, srcSize, -1))} data-tip={t("tb.rotateLeft")}>
+            <button className="ed-icon-btn" onClick={() => commit((s) => rotateState(s, srcSize, -1))} data-tip={t("tb.rotateLeft")} aria-label={t("tb.rotateLeft")}>
               <RotateCcw size={18} />
             </button>
-            <button className="ed-icon-btn" onClick={() => commit((s) => rotateState(s, srcSize, 1))} data-tip={t("tb.rotateRight")}>
+            <button className="ed-icon-btn" onClick={() => commit((s) => rotateState(s, srcSize, 1))} data-tip={t("tb.rotateRight")} aria-label={t("tb.rotateRight")}>
               <RotateCw size={18} />
             </button>
-            <button className="ed-icon-btn" onClick={() => commit((s) => flipState(s, srcSize, "h"))} data-tip={t("ed.flipH")}>
+            <button className="ed-icon-btn" onClick={() => commit((s) => flipState(s, srcSize, "h"))} data-tip={t("ed.flipH")} aria-label={t("ed.flipH")}>
               {/* lucide's names describe the mirror axis, not the motion: this one shows a left-right flip */}
               <FlipVertical2 size={18} />
             </button>
-            <button className="ed-icon-btn" onClick={() => commit((s) => flipState(s, srcSize, "v"))} data-tip={t("ed.flipV")}>
+            <button className="ed-icon-btn" onClick={() => commit((s) => flipState(s, srcSize, "v"))} data-tip={t("ed.flipV")} aria-label={t("ed.flipV")}>
               <FlipHorizontal2 size={18} />
             </button>
           </div>
@@ -743,14 +937,29 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
         <div className="ed-field">
           <div className="ed-tools-grid">
             {drawModes.map((m) => (
-              <button key={m.id} className={`ed-icon-btn${drawMode === m.id ? " on" : ""}`} onClick={() => setDrawMode(m.id)} data-tip={t(m.label)}>
+              <button key={m.id} className={`ed-icon-btn${drawMode === m.id ? " on" : ""}`} onClick={() => setDrawMode(m.id)} data-tip={t(m.label)} aria-label={t(m.label)} aria-pressed={drawMode === m.id}>
                 <m.icon size={18} />
               </button>
             ))}
           </div>
         </div>
-        {drawMode !== "eraser" && colorPicker}
-        {drawMode !== "eraser" && slider(t("ed.size"), brush, 1, 40, setBrush)}
+        {selecting && !selAnn && <p className="ed-hint">{t("ed.selectHint")}</p>}
+        {drawMode !== "eraser" && (!selecting || selAnn) && colorPicker}
+        {drawMode !== "eraser" &&
+          (!selecting || (selAnn && selAnn.kind !== "text")) &&
+          slider(t("ed.size"), brush, 1, 40, (v) => {
+            setBrush(v);
+            restyle((a) => (a.kind === "text" ? a : { ...a, size: (isMarker(a) ? v * 3 : v) / scale }), true);
+          })}
+        {selecting && selAnn && (
+          <button className="btn btn-default ed-wide" onClick={() => {
+            setSelected(null);
+            commit((s) => ({ ...s, annotations: s.annotations.filter((_, i) => i !== sel) }));
+          }}>
+            <Trash2 size={15} />
+            {t("ed.deleteSelected")}
+          </button>
+        )}
       </>
     );
   } else if (tool === "text") {
@@ -758,12 +967,41 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
       <>
         <p className="ed-hint">{t("ed.textHint")}</p>
         {colorPicker}
-        {slider(t("ed.textSize"), textSize, 12, 120, setTextSize)}
+        {slider(t("ed.textSize"), textSize, 12, 120, (v) => {
+          setTextSize(v);
+          if (textEdit?.index !== undefined) setTextEdit((te) => (te ? { ...te, size: v / scale } : te));
+          else restyle((a) => (a.kind === "text" ? { ...a, size: v / scale } : a), true);
+        })}
         <label className="toggle-row">
           <span>{t("ed.outline")}</span>
-          <input type="checkbox" className="toggle" checked={textOutline} onChange={(e) => setTextOutline(e.target.checked)} />
+          <input
+            type="checkbox"
+            className="toggle"
+            checked={textOutline}
+            onChange={(e) => {
+              const on = e.target.checked;
+              setTextOutline(on);
+              const outline = on ? outlineOpacity / 100 : 0;
+              if (textEdit?.index !== undefined) setTextEdit((te) => (te ? { ...te, outline } : te));
+              else restyle((a) => (a.kind === "text" ? { ...a, outline } : a));
+            }}
+          />
         </label>
-        {textOutline && slider(t("ed.outlineOpacity"), outlineOpacity, 5, 100, setOutlineOpacity)}
+        {textOutline &&
+          slider(t("ed.outlineOpacity"), outlineOpacity, 5, 100, (v) => {
+            setOutlineOpacity(v);
+            if (textEdit?.index !== undefined) setTextEdit((te) => (te ? { ...te, outline: v / 100 } : te));
+            else restyle((a) => (a.kind === "text" ? { ...a, outline: v / 100 } : a), true);
+          })}
+        {selAnn?.kind === "text" && (
+          <button className="btn btn-default ed-wide" onClick={() => {
+            setSelected(null);
+            commit((s) => ({ ...s, annotations: s.annotations.filter((_, i) => i !== sel) }));
+          }}>
+            <Trash2 size={15} />
+            {t("ed.deleteSelected")}
+          </button>
+        )}
       </>
     );
   }
@@ -860,7 +1098,7 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
             <small>
               {bgStatus.name} · {mb(bgStatus.size)}
             </small>
-            <button className="ed-icon-btn" disabled={bgBusy} onClick={() => void deleteModel()} data-tip={t("bg.deleteModel")}>
+            <button className="ed-icon-btn" disabled={bgBusy} onClick={() => void deleteModel()} data-tip={t("bg.deleteModel")} aria-label={t("bg.deleteModel")}>
               <Trash2 size={16} />
             </button>
           </div>
@@ -888,23 +1126,33 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
     </div>
   );
 
-  const textFontPx = textSize;
+  const textFontPx = textEdit?.size !== undefined ? textEdit.size * scale : textSize;
+  const textBoxWidth = textEdit ? measureText({ kind: "text", at: [0, 0], text: textEdit.value, color, size: textFontPx }).w : 0;
+  // Outline of the selected annotation (hidden while its text is being typed).
+  const selBox = selAnn && scale > 0 && sel !== editingIndex && (tool === "text" || selecting) ? annotationBounds(selAnn, measureText) : null;
 
   return (
     <div className="editor-root" role="dialog" aria-modal="true" aria-label={t("tb.edit")}>
       <div className="editor-bar">
         <div className="editor-bar-side">
-          <button className="ed-icon-btn" onClick={requestClose} data-tip={t("ed.close")} data-tip-pos="below">
+          <button className="ed-icon-btn" onClick={requestClose} data-tip={t("ed.close")} aria-label={t("ed.close")} data-tip-pos="below">
             <X size={18} />
           </button>
           <span className="editor-sep" />
-          <button className="ed-icon-btn" disabled={!hist.past.length} onClick={undo} data-tip={`${t("ed.undo")} (Ctrl+Z)`} data-tip-pos="below">
+          <button className="ed-icon-btn" disabled={!hist.past.length} onClick={undo} data-tip={`${t("ed.undo")} (Ctrl+Z)`} aria-label={`${t("ed.undo")} (Ctrl+Z)`} data-tip-pos="below">
             <Undo2 size={18} />
           </button>
-          <button className="ed-icon-btn" disabled={!hist.future.length} onClick={redo} data-tip={`${t("ed.redo")} (Ctrl+Y)`} data-tip-pos="below">
+          <button className="ed-icon-btn" disabled={!hist.future.length} onClick={redo} data-tip={`${t("ed.redo")} (Ctrl+Y)`} aria-label={`${t("ed.redo")} (Ctrl+Y)`} data-tip-pos="below">
             <Redo2 size={18} />
           </button>
-          <button className="btn btn-ghost" disabled={!dirty} onClick={() => commit(initialState(startTurns))}>
+          <button
+            className="btn btn-ghost"
+            disabled={!dirty}
+            onClick={() => {
+              setSelected(null);
+              commit(initialState(startTurns));
+            }}
+          >
             {t("ed.reset")}
           </button>
         </div>
@@ -962,11 +1210,12 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
       <div className="editor-main" onPointerDown={() => saveMenu && setSaveMenu(false)}>
         <div
           ref={stageRef}
-          className={`editor-stage tool-${tool}${tool === "draw" ? ` mode-${drawMode}` : ""}`}
+          className={`editor-stage tool-${tool}${tool === "draw" ? ` mode-${drawMode}` : ""}${hoverMovable || drag.current?.kind === "move" ? " can-move" : ""}`}
           onPointerDown={onStageDown}
           onPointerMove={onStageMove}
           onPointerUp={onStageUp}
           onPointerCancel={onStageUp}
+          onDoubleClick={onStageDoubleClick}
         >
           {failed && <div className="editor-msg">{t("ed.loadFailed")}</div>}
           {!source && !failed && <LoaderCircle className="spin editor-spinner" size={28} />}
@@ -982,6 +1231,14 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
                 />
               )}
               {cropBox}
+              {selBox && (
+                <div
+                  className="ed-selection"
+                  style={{ left: (selBox.x - region.x) * scale, top: (selBox.y - region.y) * scale, width: selBox.w * scale, height: selBox.h * scale }}
+                />
+              )}
+              {guides?.x.map((x) => <div key={`x${x}`} className="ed-guide ed-guide-v" style={{ left: (x - region.x) * scale }} />)}
+              {guides?.y.map((y) => <div key={`y${y}`} className="ed-guide ed-guide-h" style={{ top: (y - region.y) * scale }} />)}
               {textEdit && (
                 <input
                   className="editor-text-input"
@@ -991,10 +1248,13 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
                   style={{
                     left: (textEdit.at[0] - region.x) * scale,
                     top: (textEdit.at[1] - region.y) * scale,
-                    color,
+                    width: Math.max(140, textBoxWidth + 24),
+                    color: textEdit.color ?? color,
                     font: TEXT_FONT(textFontPx),
+                    lineHeight: TEXT_LINE_HEIGHT,
                   }}
                   onPointerDown={(e) => e.stopPropagation()}
+                  onDoubleClick={(e) => e.stopPropagation()}
                   onChange={(e) => setTextEdit((te) => (te ? { ...te, value: e.target.value } : te))}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {

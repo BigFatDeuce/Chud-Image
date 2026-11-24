@@ -298,6 +298,46 @@
   cursor: text;
 }
 
+.editor-stage.mode-select {
+  cursor: default;
+}
+
+/* Over something that can be dragged, and while dragging it. */
+.editor-stage.can-move {
+  cursor: move;
+}
+
+.ed-selection {
+  position: absolute;
+  pointer-events: none;
+  outline: 1.5px dashed rgba(255, 255, 255, 0.95);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.25);
+  border-radius: 2px;
+}
+
+/* Alignment guides shown while an annotation snaps to the picture's edges or centre. */
+.ed-guide {
+  position: absolute;
+  pointer-events: none;
+  background: #ff3ea5;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.4);
+}
+
+.ed-guide-v {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  margin-left: -0.5px;
+}
+
+.ed-guide-h {
+  left: 0;
+  right: 0;
+  height: 1px;
+  margin-top: -0.5px;
+}
+
 .editor-canvas-wrap {
   position: relative;
   flex: none;
@@ -418,7 +458,10 @@
   outline: 1.5px dashed rgba(255, 255, 255, 0.85);
   outline-offset: 3px;
   background: transparent;
+  /* Must match TEXT_LINE_HEIGHT: the canvas lays the text out the same way. */
   line-height: 1.2;
+  height: auto;
+  margin: 0;
   text-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
 }
 

@@ -236,28 +236,25 @@ export function dragCrop(start: Rect, handle: Handle, dx: number, dy: number, bo
   y0 = Math.max(0, y0);
   x1 = Math.min(bounds.w, x1);
   y1 = Math.min(bounds.h, y1);
-  let r: Rect = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
-  if (ratio) {
-    // Width leads for side/corner handles, height for top/bottom ones.
-    const byHeight = handle === "n" || handle === "s";
-    let w = byHeight ? r.h * ratio : r.w;
-    let h = byHeight ? r.h : r.w / ratio;
-    // Stay inside the picture on the sides the handle can grow towards.
-    const maxW = handle.includes("w") ? x1 : bounds.w - x0;
-    const maxH = handle.includes("n") ? y1 : bounds.h - y0;
-    if (w > maxW) {
-      w = maxW;
-      h = w / ratio;
-    }
-    if (h > maxH) {
-      h = maxH;
-      w = h * ratio;
-    }
-    const nx = handle.includes("w") ? x1 - w : handle === "n" || handle === "s" ? start.x + (start.w - w) / 2 : x0;
-    const ny = handle.includes("n") ? y1 - h : handle === "e" || handle === "w" ? start.y + (start.h - h) / 2 : y0;
-    r = clampRect({ x: nx, y: ny, w, h }, bounds, min);
-  }
-  return r;
+  if (!ratio) return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+
+  // Locked ratio. The edge opposite the handle stays put; a side handle keeps the crop
+  // centred across it. Width leads, except for the top/bottom handles.
+  const byHeight = !handle.includes("e") && !handle.includes("w");
+  // Room available towards where the handle grows (the whole picture across a side handle).
+  const roomW = handle.includes("w") ? start.x + start.w : handle.includes("e") ? bounds.w - start.x : bounds.w;
+  const roomH = handle.includes("n") ? start.y + start.h : handle.includes("s") ? bounds.h - start.y : bounds.h;
+  // The shorter side never goes below `min`, the crop never leaves the picture.
+  const minW = Math.max(min, min * ratio);
+  const maxW = Math.min(roomW, roomH * ratio);
+  let w = byHeight ? (y1 - y0) * ratio : x1 - x0;
+  // Too little room on the anchored side for the minimum: let the crop slide instead.
+  w = minW <= maxW ? Math.min(Math.max(w, minW), maxW) : Math.min(minW, bounds.w, bounds.h * ratio);
+  const h = w / ratio;
+  const within = (v: number, size: number, limit: number) => Math.min(Math.max(v, 0), Math.max(0, limit - size));
+  const x = handle.includes("w") ? start.x + start.w - w : handle.includes("e") ? start.x : start.x + (start.w - w) / 2;
+  const y = handle.includes("n") ? start.y + start.h - h : handle.includes("s") ? start.y : start.y + (start.h - h) / 2;
+  return { x: within(x, w, bounds.w), y: within(y, h, bounds.h), w, h };
 }
 
 // ------------------------------------------------------------------ adjustments
@@ -331,6 +328,42 @@ export function applyAdjust(data: Uint8ClampedArray, width: number, height: numb
 
 export const TEXT_FONT = (size: number) => `600 ${size}px "Segoe UI", system-ui, -apple-system, "Noto Sans", sans-serif`;
 
+/** Line height of the text annotations, as a multiple of the font size. */
+export const TEXT_LINE_HEIGHT = 1.2;
+
+const outlineWidth = (size: number) => Math.max(2, size / 9);
+
+export interface TextLayout extends Size {
+  lineHeight: number;
+  /** From the top of a line box to the baseline. */
+  baseline: number;
+}
+
+/**
+ * Measures a text annotation and places its baseline the way CSS places it in a line box
+ * of TEXT_LINE_HEIGHT: the font's ascent plus half the leading. The editor types into an
+ * HTML text box laid out by these same rules, so the committed text does not move.
+ */
+export function textLayout(ctx: CanvasRenderingContext2D, a: Annotation & { kind: "text" }): TextLayout {
+  ctx.save();
+  ctx.font = TEXT_FONT(a.size);
+  const lines = a.text.split("\n");
+  const w = Math.max(0, ...lines.map((l) => ctx.measureText(l).width));
+  const m = ctx.measureText("Hg");
+  ctx.restore();
+  const lineHeight = a.size * TEXT_LINE_HEIGHT;
+  const ascent = Number.isFinite(m.fontBoundingBoxAscent) ? m.fontBoundingBoxAscent : a.size * 0.92;
+  const descent = Number.isFinite(m.fontBoundingBoxDescent) ? m.fontBoundingBoxDescent : a.size * 0.24;
+  return { w, h: lines.length * lineHeight, lineHeight, baseline: (lineHeight - ascent - descent) / 2 + ascent };
+}
+
+/** Width and height of a text annotation; the default is a rough estimate for tests. */
+export type Measure = (a: Annotation & { kind: "text" }) => Size;
+export const roughMeasure: Measure = (a) => {
+  const lines = a.text.split("\n");
+  return { w: Math.max(...lines.map((l) => l.length)) * a.size * 0.6, h: lines.length * a.size * TEXT_LINE_HEIGHT };
+};
+
 export function drawAnnotation(ctx: CanvasRenderingContext2D, a: Annotation) {
   ctx.save();
   ctx.lineCap = "round";
@@ -354,16 +387,17 @@ export function drawAnnotation(ctx: CanvasRenderingContext2D, a: Annotation) {
     }
     ctx.stroke();
   } else if (a.kind === "text") {
+    const layout = textLayout(ctx, a);
     ctx.font = TEXT_FONT(a.size);
-    ctx.textBaseline = "top";
+    // Laid out like the text box used to type it, so the words stay exactly where typed.
+    ctx.textBaseline = "alphabetic";
     const outline = Math.min(1, Math.max(0, a.outline ?? 0));
     // Optional contrasting outline, to keep text readable on busy backgrounds.
-    ctx.lineWidth = Math.max(2, a.size / 9);
+    ctx.lineWidth = outlineWidth(a.size);
     ctx.strokeStyle = isLight(a.color) ? `rgba(0,0,0,${outline})` : `rgba(255,255,255,${outline})`;
     ctx.fillStyle = a.color;
-    const lines = a.text.split("\n");
-    lines.forEach((line, i) => {
-      const y = a.at[1] + i * a.size * 1.2;
+    a.text.split("\n").forEach((line, i) => {
+      const y = a.at[1] + i * layout.lineHeight + layout.baseline;
       if (outline > 0) ctx.strokeText(line, a.at[0], y);
       ctx.fillText(line, a.at[0], y);
     });
@@ -497,4 +531,92 @@ export function hitAnnotation(a: Annotation, p: Pt, r: number, measure?: (a: Ann
   const nx = (p[0] - (rect.x + rx)) / rx;
   const ny = (p[1] - (rect.y + ry)) / ry;
   return Math.abs(Math.hypot(nx, ny) - 1) * Math.min(rx, ry) <= tol;
+}
+
+// ------------------------------------------------------------------ selecting & moving
+
+/** The box an annotation covers on the picture, thickness of its lines included. */
+export function annotationBounds(a: Annotation, measure: Measure = roughMeasure): Rect {
+  if (a.kind === "text") {
+    const size = measure(a);
+    const pad = a.outline ? outlineWidth(a.size) / 2 : 0;
+    return { x: a.at[0] - pad, y: a.at[1] - pad, w: size.w + pad * 2, h: size.h + pad * 2 };
+  }
+  const pts = a.kind === "pen" ? a.points : [a.a, a.b];
+  const xs = pts.map((p) => p[0]);
+  const ys = pts.map((p) => p[1]);
+  // An arrow head is wider than its shaft.
+  const half = a.kind === "arrow" ? Math.max(a.size * 3.2, 12) / 2 : a.size / 2;
+  const x = Math.min(...xs) - half;
+  const y = Math.min(...ys) - half;
+  return { x, y, w: Math.max(...xs) + half - x, h: Math.max(...ys) + half - y };
+}
+
+/** The same annotation, moved by (dx, dy). */
+export const translateAnnotation = (a: Annotation, dx: number, dy: number): Annotation =>
+  mapAnnotation(a, ([x, y]) => [x + dx, y + dy]);
+
+/**
+ * The topmost annotation under `p` (index in `list`, or -1). Lines and outlines are hit
+ * within `tol`; the inside of a text, a rectangle or an ellipse counts too, but only when
+ * no outline is closer to the pointer.
+ */
+export function pickAnnotation(list: Annotation[], p: Pt, tol: number, measure: Measure = roughMeasure, accept: (a: Annotation) => boolean = () => true): number {
+  for (let i = list.length - 1; i >= 0; i--) {
+    const a = list[i];
+    if (accept(a) && hitAnnotation(a, p, tol, measure)) return i;
+  }
+  for (let i = list.length - 1; i >= 0; i--) {
+    const a = list[i];
+    if (!accept(a) || (a.kind !== "rect" && a.kind !== "ellipse")) continue;
+    const r = annotationBounds(a, measure);
+    if (p[0] >= r.x && p[0] <= r.x + r.w && p[1] >= r.y && p[1] <= r.y + r.h) return i;
+  }
+  return -1;
+}
+
+export interface Snap {
+  dx: number;
+  dy: number;
+  /** Lines the moved box snapped to, in picture pixels (for on-screen guides). */
+  guides: { x: number[]; y: number[] };
+}
+
+/**
+ * Adjusts a move of `box` by (dx, dy) so that its edges or centre land exactly on the
+ * edges or centre of `frame` when they come within `tol`.
+ */
+export function snapMove(box: Rect, dx: number, dy: number, frame: Rect, tol: number): Snap {
+  const axis = (start: number, size: number, d: number, fStart: number, fSize: number) => {
+    const targets = [fStart, fStart + fSize / 2, fStart + fSize];
+    let best: { delta: number; line: number } | null = null;
+    for (const offset of [0, size / 2, size]) {
+      const at = start + d + offset;
+      for (const line of targets) {
+        const delta = line - at;
+        if (Math.abs(delta) <= tol && (!best || Math.abs(delta) < Math.abs(best.delta))) best = { delta, line };
+      }
+    }
+    return best;
+  };
+  const sx = axis(box.x, box.w, dx, frame.x, frame.w);
+  const sy = axis(box.y, box.h, dy, frame.y, frame.h);
+  return {
+    dx: dx + (sx?.delta ?? 0),
+    dy: dy + (sy?.delta ?? 0),
+    guides: { x: sx ? [sx.line] : [], y: sy ? [sy.line] : [] },
+  };
+}
+
+/**
+ * Limits a move so that at least `keep` pixels of the box stay on the frame: an
+ * annotation can hang over the edge but never get lost outside the picture.
+ */
+export function keepInFrame(box: Rect, dx: number, dy: number, frame: Rect, keep: number): [number, number] {
+  const kx = Math.min(keep, box.w);
+  const ky = Math.min(keep, box.h);
+  const lo = (start: number, size: number, f0: number, k: number) => f0 + k - (start + size);
+  const hi = (start: number, f0: number, fSize: number, k: number) => f0 + fSize - k - start;
+  const clamp = (v: number, a: number, b: number) => Math.min(Math.max(v, a), b);
+  return [clamp(dx, lo(box.x, box.w, frame.x, kx), hi(box.x, frame.x, frame.w, kx)), clamp(dy, lo(box.y, box.h, frame.y, ky), hi(box.y, frame.y, frame.h, ky))];
 }

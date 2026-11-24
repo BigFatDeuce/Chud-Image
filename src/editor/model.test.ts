@@ -89,6 +89,43 @@ describe("crop", () => {
     expect(wide.x + wide.w).toBeLessThanOrEqual(SRC.w);
     expect(wide.y + wide.h).toBeLessThanOrEqual(SRC.h);
   });
+
+  it("keeps a locked ratio at the minimum size (regression IMG-03)", () => {
+    const r = dragCrop({ x: 0, y: 0, w: 100, h: 100 }, "se", -99, -99, { w: 100, h: 100 }, 16 / 9);
+    expect(r.w / r.h).toBeCloseTo(16 / 9, 6);
+    expect(Math.min(r.w, r.h)).toBeGreaterThanOrEqual(16 - 1e-9);
+  });
+
+  it("any drag stays inside the picture, above the minimum and on ratio", () => {
+    // Small deterministic PRNG so failures are reproducible.
+    let seed = 12345;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+    const handles = ["n", "s", "e", "w", "ne", "nw", "se", "sw", "move"] as const;
+    const ratios = [null, 1, 4 / 3, 3 / 2, 16 / 9, 3 / 4, 9 / 16, 400 / 300];
+    const eps = 1e-6;
+    for (let i = 0; i < 4000; i++) {
+      const bounds = { w: 40 + Math.floor(rnd() * 800), h: 40 + Math.floor(rnd() * 800) };
+      const min = 4 + rnd() * 20;
+      const w = min + rnd() * (bounds.w - min);
+      const h = min + rnd() * (bounds.h - min);
+      const start = { x: rnd() * (bounds.w - w), y: rnd() * (bounds.h - h), w, h };
+      const handle = handles[i % handles.length];
+      const ratio = ratios[Math.floor(rnd() * ratios.length)];
+      const dx = (rnd() - 0.5) * bounds.w * 3;
+      const dy = (rnd() - 0.5) * bounds.h * 3;
+      const r = dragCrop(start, handle, dx, dy, bounds, handle === "move" ? null : ratio, min);
+      const ctx = JSON.stringify({ i, bounds, min, start, handle, ratio, dx, dy, r });
+      expect(r.x, ctx).toBeGreaterThanOrEqual(-eps);
+      expect(r.y, ctx).toBeGreaterThanOrEqual(-eps);
+      expect(r.x + r.w, ctx).toBeLessThanOrEqual(bounds.w + eps);
+      expect(r.y + r.h, ctx).toBeLessThanOrEqual(bounds.h + eps);
+      const minFits = !ratio || (Math.max(min, min * ratio) <= bounds.w && Math.max(min, min / ratio) <= bounds.h);
+      if (minFits) {
+        expect(Math.min(r.w, r.h), ctx).toBeGreaterThanOrEqual(min - eps);
+        if (ratio && handle !== "move") expect(Math.abs(r.w / r.h - ratio), ctx).toBeLessThan(1e-6);
+      }
+    }
+  });
 });
 
 describe("adjustments", () => {

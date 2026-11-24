@@ -58,7 +58,7 @@ The old **E-mail** and **Burn** buttons are gone. Nobody misses them.
 | **Glitch transition** | Moving to the next photo plays a short WebGL glitch: slices tear, RGB channels split, blocks of the new picture bleed through. It can be switched to a fade, or off, in Settings. Respects "reduce motion". |
 | **Smooth zoom** | Zoom follows the cursor, with drag to pan, and soft magnets at "fit" and "100%". It runs from 10% of the fit size up to 3200%. Double-click toggles fit / actual size. |
 | **Rotation that's safe** | Rotating is a *pending* change until you press `Ctrl+S`. JPEGs are rotated **losslessly** by rewriting the EXIF orientation tag, so pixels are never re-encoded. PNG / BMP / TIFF / WebP-lossless are re-encoded without quality loss after asking. Writes are atomic (temp file + rename). |
-| **Quick edits** | `E` opens a simple editor: crop (free or 1:1, 4:3, 16:9…), rotate and mirror, brightness / contrast / saturation / warmth / vignette, one-click filters, pen, highlighter, lines, arrows, boxes, circles and text (with an optional outline). Everything can be undone. Save a copy under a new name, or replace the original, which then goes to the Recycle Bin / Trash so nothing is lost. |
+| **Quick edits** | `E` opens a simple editor: crop (free or 1:1, 4:3, 16:9…), rotate and mirror, brightness / contrast / saturation / warmth / vignette, one-click filters, pen, highlighter, lines, arrows, boxes, circles and text (with an optional outline). Texts and drawings can be picked up again afterwards: drag them (they snap to the picture's edges and centre), nudge them pixel by pixel with the arrow keys, recolour or resize them, double-click a text to change it. Everything can be undone. Save a copy under a new name, or replace the original, which then goes to the Recycle Bin / Trash so nothing is lost. |
 | **Background removal** | Optional, in the editor. Cuts out the subject with an adjustable threshold and saves it with transparency (PNG/WebP/TIFF). It uses an AI model that is **not** shipped with the app: one click downloads it once (BiRefNet lite, 224 MB, MIT license, checked against a SHA-256; on Linux the 11 MB ONNX Runtime library from Microsoft comes with it), and it then runs entirely on your computer. Pictures are never uploaded. The model can be deleted from the same panel. |
 | **Slideshow** | `F5` or the play orb. Fullscreen, configurable interval, optional loop, `Esc` to leave. |
 | **Fullscreen** | `F11`. The toolbar floats and hides itself along with the cursor. |
@@ -115,6 +115,7 @@ screen but are never rewritten.
 | `Ctrl+S` / `Ctrl+Shift+S` | Save rotation / Save as |
 | `E` | Edit (crop, adjust, filters, draw, text, background) |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / redo, in the editor |
+| Arrows / `Shift`+arrows | Move the selected text or drawing by 1 / 10 pixels, in the editor (`Del` removes it) |
 | `Del` | Move to Recycle Bin |
 | `F5` | Start slideshow |
 | `Space` | Next image, or pause / resume during a slideshow |
@@ -189,7 +190,7 @@ cargo test --manifest-path src-tauri/Cargo.toml   # decoding, natural sort, loss
 - **Frontend: React + TypeScript.**
   - The viewer is a small imperative engine outside of React, so zoom and pan never trigger a re-render.
   - The glitch transition is a single WebGL2 fragment shader.
-  - The editor keeps a list of edits (never touching the file) and renders them at full size only when you save; the backend re-encodes to the target format and keeps the original EXIF data.
+  - The editor keeps a list of edits (never touching the file) and renders them at full size only when you save; the backend re-encodes to the target format and keeps the original EXIF data, except the embedded thumbnail, which would still show the unedited picture.
 - **Background removal:** [BiRefNet](https://github.com/ZhengPeng7/BiRefNet) (ONNX export from [rembg](https://github.com/danielgatis/rembg)) run with [ONNX Runtime](https://onnxruntime.ai) through the `ort` crate, telemetry off. On Windows ONNX Runtime is linked into the app; on Linux it is loaded at run time from Microsoft's official build (glibc 2.28+), downloaded with the model, so the app itself still runs on older distributions. The model is stored in `%LOCALAPPDATA%\com.bigfatdeuce.chudimage\models` (Windows) or `~/.local/share/com.bigfatdeuce.chudimage/models` (Linux).
 - **Updates:** `tauri-plugin-updater` with a signed `latest.json` attached to each GitHub release.
 - **Lossless JPEG rotation:** only the EXIF `Orientation` tag is changed. If the file has no EXIF block, a minimal one is inserted. Image data is never touched.
