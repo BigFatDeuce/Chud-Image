@@ -19,6 +19,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 
 /// Side of the square the model works on.
 pub const SIDE: usize = 1024;
@@ -167,6 +168,10 @@ pub async fn download(dir: &Path, state: &BgState, mut progress: impl FnMut(u64,
     }
     let client = reqwest::Client::builder()
         .user_agent(concat!("ChudImage/", env!("CARGO_PKG_VERSION")))
+        // A stalled connection must end in an error: cancelling is only noticed between
+        // chunks, so without these a dead server would keep the download "busy" forever.
+        .connect_timeout(Duration::from_secs(20))
+        .read_timeout(Duration::from_secs(30))
         .build()
         .map_err(net_err)?;
 
@@ -201,9 +206,13 @@ async fn fetch(client: &reqwest::Client, dir: &Path, a: &Asset, state: &BgState,
             if state.cancel.load(Ordering::SeqCst) {
                 return Err(AppError::new(ErrorCode::Cancelled, "download cancelled"));
             }
+            received += chunk.len() as u64;
+            // Never fill the disk with an answer bigger than the expected file.
+            if received > a.size {
+                return Err(AppError::corrupt("the downloaded file does not match the expected one"));
+            }
             file.write_all(&chunk)?;
             hasher.update(&chunk);
-            received += chunk.len() as u64;
             if received - last_report >= 512 * 1024 {
                 last_report = received;
                 progress(received);
