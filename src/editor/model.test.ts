@@ -90,6 +90,12 @@ describe("crop", () => {
     expect(wide.y + wide.h).toBeLessThanOrEqual(SRC.h);
   });
 
+  it("moving never resizes, even a crop smaller than the current minimum", () => {
+    const small = { x: 10, y: 10, w: 10, h: 6 };
+    expect(dragCrop(small, "move", 5, 7, { w: 100, h: 100 }, null, 16)).toEqual({ x: 15, y: 17, w: 10, h: 6 });
+    expect(dragCrop(small, "move", 500, -500, { w: 100, h: 100 }, 16 / 9, 16)).toEqual({ x: 90, y: 0, w: 10, h: 6 });
+  });
+
   it("keeps a locked ratio at the minimum size (regression IMG-03)", () => {
     const r = dragCrop({ x: 0, y: 0, w: 100, h: 100 }, "se", -99, -99, { w: 100, h: 100 }, 16 / 9);
     expect(r.w / r.h).toBeCloseTo(16 / 9, 6);

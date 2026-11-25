@@ -223,7 +223,13 @@ export type Handle = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw" | "move";
  * keeps the result inside `bounds`.
  */
 export function dragCrop(start: Rect, handle: Handle, dx: number, dy: number, bounds: Size, ratio: number | null, min = 16): Rect {
-  if (handle === "move") return clampRect({ ...start, x: start.x + dx, y: start.y + dy }, bounds, min);
+  if (handle === "move") {
+    // Moving only moves: the size stays, even below today's minimum (which depends on the zoom).
+    const w = Math.min(start.w, bounds.w);
+    const h = Math.min(start.h, bounds.h);
+    const at = (v: number, size: number, limit: number) => Math.min(Math.max(v, 0), limit - size);
+    return { x: at(start.x + dx, w, bounds.w), y: at(start.y + dy, h, bounds.h), w, h };
+  }
   let x0 = start.x;
   let y0 = start.y;
   let x1 = start.x + start.w;
