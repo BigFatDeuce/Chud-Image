@@ -13,7 +13,8 @@ use image::{DynamicImage, ImageFormat, Rgb, RgbImage};
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::collections::BTreeMap;
+use std::time::{Duration, SystemTime};
 
 /// Extensions the editor can write. Everything else (RAW, HEIC, AVIF, SVG…) can only be
 /// saved as a copy in one of these.
@@ -142,24 +143,42 @@ pub const RECOVERY_DELAY: Duration = Duration::from_secs(120);
 /// Puts back pictures left missing by an interrupted "replace the original": a staged
 /// edit whose original is gone (already in the trash) is renamed to the original's name.
 /// Staged files whose original is still there are left alone: that save never got as
-/// far as touching the original. Returns the pictures restored.
+/// far as touching the original. When several edits of one picture were left behind, the
+/// most recent one is restored and the others are kept as they are; while any of them is
+/// younger than `min_age` (a save may still be running) the picture is not touched.
+/// Returns the pictures restored.
 pub fn recover_interrupted(dir: &Path, min_age: Duration) -> Vec<PathBuf> {
     let Ok(entries) = fs::read_dir(dir) else { return Vec::new() };
-    let mut restored = Vec::new();
+    // Per picture: the newest staged edit, and whether one is too recent to touch.
+    let mut found: BTreeMap<String, (Option<(SystemTime, PathBuf)>, bool)> = BTreeMap::new();
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         let Some(target_name) = safe_write::edit_target_name(&name) else { continue };
         let Ok(meta) = entry.metadata() else { continue };
-        let old_enough = meta.modified().ok().and_then(|m| m.elapsed().ok()).is_some_and(|age| age >= min_age);
-        if !meta.is_file() || !old_enough {
+        if !meta.is_file() {
             continue;
         }
+        let slot = found.entry(target_name).or_insert((None, false));
+        let modified = meta.modified().ok();
+        let old_enough = modified.and_then(|m| m.elapsed().ok()).is_some_and(|age| age >= min_age);
+        if !old_enough {
+            slot.1 = true;
+            continue;
+        }
+        let modified = modified.unwrap_or(SystemTime::UNIX_EPOCH);
+        if !slot.0.as_ref().is_some_and(|(best, _)| modified <= *best) {
+            slot.0 = Some((modified, entry.path()));
+        }
+    }
+    let mut restored = Vec::new();
+    for (target_name, (newest, busy)) in found {
+        let Some((_, staged)) = newest else { continue };
         let target = dir.join(&target_name);
         // `symlink_metadata`: a dangling link still counts as "there".
-        if fs::symlink_metadata(&target).is_ok() {
+        if busy || fs::symlink_metadata(&target).is_ok() {
             continue;
         }
-        if fs::rename(entry.path(), &target).is_ok() {
+        if fs::rename(&staged, &target).is_ok() {
             safe_write::sync_folder(&target);
             restored.push(target);
         }
@@ -284,6 +303,33 @@ mod tests {
         assert!(recover_interrupted(dir.path(), Duration::ZERO).is_empty());
         assert_eq!(fs::read(&dest).unwrap(), b"current");
         assert!(staged.exists() && legacy.exists());
+    }
+
+    /// Two interrupted replaces of the same picture: the latest edit wins, the other stays.
+    #[test]
+    fn recovery_restores_the_newest_of_several_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("photo.png");
+        let older = safe_write::stage(&dest, b"first edit", safe_write::EDIT_TAG).unwrap();
+        let newer = safe_write::stage(&dest, b"second edit", safe_write::EDIT_TAG).unwrap();
+        let now = std::time::SystemTime::now();
+        fs::File::options().write(true).open(&older).unwrap().set_modified(now - Duration::from_secs(600)).unwrap();
+        fs::File::options().write(true).open(&newer).unwrap().set_modified(now - Duration::from_secs(300)).unwrap();
+        assert_eq!(recover_interrupted(dir.path(), RECOVERY_DELAY), vec![dest.clone()]);
+        assert_eq!(fs::read(&dest).unwrap(), b"second edit");
+        assert!(older.exists(), "the older edit is kept, not lost");
+    }
+
+    /// One edit of the picture may still be on its way: leave the picture alone.
+    #[test]
+    fn recovery_waits_while_any_edit_of_the_picture_is_recent() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("photo.png");
+        let old = safe_write::stage(&dest, b"old edit", safe_write::EDIT_TAG).unwrap();
+        fs::File::options().write(true).open(&old).unwrap().set_modified(std::time::SystemTime::now() - Duration::from_secs(600)).unwrap();
+        safe_write::stage(&dest, b"save in progress", safe_write::EDIT_TAG).unwrap();
+        assert!(recover_interrupted(dir.path(), RECOVERY_DELAY).is_empty());
+        assert!(!dest.exists());
     }
 
     #[test]
