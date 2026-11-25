@@ -53,16 +53,19 @@ export function dirName(path: string): string {
   return path.slice(0, i);
 }
 
+/** Whether `path` ends with a separator (on POSIX only "/" is one). */
+const endsWithSep = (path: string) => (isPosix(path) ? path.endsWith("/") : /[\\/]$/.test(path));
+
 /** Appends a file name to a folder without doubling the separator. */
 export function joinPath(dir: string, name: string): string {
   if (dir === "" || dir === ".") return name;
-  if (/[\\/]$/.test(dir)) return dir + name;
+  if (endsWithSep(dir)) return dir + name;
   return dir + (isPosix(dir) || (!dir.includes("\\") && dir.includes("/")) ? "/" : "\\") + name;
 }
 
 /** Whether two folder paths name the same folder, ignoring a trailing separator. */
 export function sameFolder(a: string, b: string): boolean {
-  const norm = (p: string) => (p.length > 1 && /[\\/]$/.test(p) && !/^[A-Za-z]:[\\/]$/.test(p) ? p.slice(0, -1) : p);
+  const norm = (p: string) => (p.length > 1 && endsWithSep(p) && !/^[A-Za-z]:[\\/]$/.test(p) ? p.slice(0, -1) : p);
   const x = norm(a);
   const y = norm(b);
   return isPosix(x) ? x === y : x.toLowerCase() === y.toLowerCase();

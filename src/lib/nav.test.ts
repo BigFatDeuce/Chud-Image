@@ -70,6 +70,10 @@ describe("folder of a path (regression IMG-02)", () => {
   it("treats a backslash in a Linux file name as part of the name", () => {
     expect(dirName("/home/me/odd\\name.jpg")).toBe("/home/me");
     expect(fileName("/home/me/odd\\name.jpg")).toBe("odd\\name.jpg");
+    // A Linux folder whose name ends with a backslash.
+    expect(joinPath("/home/a\\", "x.jpg")).toBe("/home/a\\/x.jpg");
+    expect(sameFolder("/home/a\\", "/home/a")).toBe(false);
+    expect(sameFolder("/home/a\\/", "/home/a\\")).toBe(true);
   });
 
   it("joins without doubling separators", () => {
