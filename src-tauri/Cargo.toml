@@ -1,6 +1,6 @@
 [package]
 name = "chud-image"
-version = "1.3.0"
+version = "1.3.1"
 description = "Chud Image — a modern successor to Windows Photo Viewer"
 authors = ["BigFatDeuce"]
 license = "GPL-3.0-or-later"

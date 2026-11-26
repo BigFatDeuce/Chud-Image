@@ -22,6 +22,12 @@ No library to import, no account, no cloud.
 
 ## What's new
 
+### 1.3.1
+
+- **Fixed:** moving a small crop could change its size and ratio; a Linux folder whose name ends
+  with a backslash; with several interrupted saves of the same photo, the most recent is now the
+  one restored.
+
 ### 1.3
 
 - **Move what you added** in the editor: drag texts and drawings, which snap to the edges and
