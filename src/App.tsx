@@ -196,12 +196,24 @@ export default function App() {
   }, []);
 
   // Show the (initially hidden) window once the theme is applied: no white flash.
+  // WebKitGTK (Linux) runs no animation frame while the window is hidden, so waiting for
+  // one alone left the window invisible until the backend's safety net: a short timer
+  // shows it as well, whichever comes first.
   useEffect(() => {
     if (!ready) return;
-    requestAnimationFrame(() => {
+    let done = false;
+    const show = () => {
+      if (done) return;
+      done = true;
       const win = getCurrentWindow();
       win.show().then(() => win.setFocus()).catch(() => undefined);
-    });
+    };
+    const frame = requestAnimationFrame(show);
+    const timer = window.setTimeout(show, 30);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
   }, [ready]);
 
   const pickFile = useCallback(async () => {
@@ -294,6 +306,7 @@ export default function App() {
         turns: pendingRef.current[path] ?? 0,
         transition: animate,
         checker: settings.transparencyChecker && ALPHA_EXTENSIONS.has(ext),
+        keepZoom: animate,
       })
       .then((ok) => {
         if (!ok || pathRef.current !== path) return;
