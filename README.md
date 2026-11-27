@@ -22,6 +22,13 @@ No library to import, no account, no cloud.
 
 ## What's new
 
+### 1.3.2
+
+- **Zoom kept between photos:** zoom in, then go to the next or previous photo, and it opens at
+  the same zoom and spot. A photo fitted to the window stays fitted.
+- **Faster start on Linux:** the window no longer waits for a frame the hidden webview never
+  draws.
+
 ### 1.3.1
 
 - **Fixed:** moving a small crop could change its size and ratio; a Linux folder whose name ends
