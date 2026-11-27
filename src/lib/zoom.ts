@@ -108,3 +108,11 @@ export function formatPercent(scale: number): string {
   const p = scale * 100;
   return `${p < 10 ? p.toFixed(1).replace(/\.0$/, "") : Math.round(p)}%`;
 }
+
+/**
+ * The view for the next picture when the zoom carries over: same scale (within that
+ * picture's limits) and same offset from the centre, kept inside the viewport.
+ */
+export function keptView(view: View, fit: number, image: Size, viewport: Size, turns = 0): View {
+  return clampPan({ scale: clampScale(view.scale, fit), x: view.x, y: view.y }, image, viewport, turns);
+}

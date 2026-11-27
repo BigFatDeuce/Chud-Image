@@ -6,6 +6,7 @@ import {
   clampPan,
   clampScale,
   fitScale,
+  keptView,
   rotatedSize,
   stepScale,
   wheelFactor,
@@ -39,6 +40,8 @@ export interface ShowRequest {
   transition: boolean;
   /** Draw a checkerboard behind the picture (formats that may contain transparency). */
   checker: boolean;
+  /** Keep the current zoom and position instead of fitting the new picture (navigation). */
+  keepZoom?: boolean;
 }
 
 interface State {
@@ -454,14 +457,16 @@ export class ViewerEngine {
     const before = kind === "none" ? null : (kind === "glitch" && this.liveGlitchFrame()) || this.snapshot();
 
     this.cancelTransition();
-    this.setImage(img, url, req.turns, req.checker);
+    this.setImage(img, url, req.turns, req.checker, !!req.keepZoom);
     this.events.onLoaded({ w: this.natural.w, h: this.natural.h });
     if (before) void this.runTransition(kind, before, rapid);
     return true;
   }
 
-  private setImage(img: HTMLImageElement, url: string, turns: number, checker: boolean) {
+  private setImage(img: HTMLImageElement, url: string, turns: number, checker: boolean, keepZoom: boolean) {
     const previous = this.img;
+    // A fitted picture stays fitted; a chosen zoom carries over to the next picture.
+    const kept = keepZoom && previous && !this.fitMode ? { ...this.tgt } : null;
     if (previous && previous !== img && this.imgUrl) {
       // Keep the previous picture decoded: going back is then instant.
       this.preloaded.set(this.imgUrl, Promise.resolve(previous));
@@ -476,7 +481,13 @@ export class ViewerEngine {
     this.natural = { w: img.naturalWidth || 1024, h: img.naturalHeight || 1024 };
     this.tgt = { scale: 1, x: 0, y: 0, angle: turns * 90 };
     this.cur = { ...this.tgt };
-    this.fitToWindow(false);
+    if (!kept) return this.fitToWindow(false);
+    const fit = this.fitValue();
+    const view = keptView(kept, fit, this.imageCss(), this.viewport(), turns);
+    this.tgt = { ...this.tgt, ...view };
+    this.fitMode = Math.abs(view.scale - fit) < 1e-4;
+    this.jump();
+    this.emitZoom();
   }
 
   clear(resetToken = true) {

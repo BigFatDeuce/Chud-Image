@@ -4,6 +4,7 @@ import {
   clampScale,
   fitScale,
   formatPercent,
+  keptView,
   MAX_SCALE,
   minScale,
   rotatedSize,
@@ -110,5 +111,35 @@ describe("zoom steps and slider", () => {
     expect(formatPercent(0.125)).toBe("13%");
     expect(formatPercent(0.05)).toBe("5%");
     expect(formatPercent(0.025)).toBe("2.5%");
+  });
+});
+
+describe("zoom kept between pictures", () => {
+  const vp = { w: 1000, h: 800 };
+
+  it("keeps the scale and the offset when the next picture allows it", () => {
+    const img = { w: 4000, h: 3000 };
+    const fit = fitScale(img, vp);
+    expect(keptView({ scale: 2, x: 300, y: -200 }, fit, img, vp)).toEqual({ scale: 2, x: 300, y: -200 });
+  });
+
+  it("clamps the offset so the next picture still fills the view", () => {
+    const img = { w: 1200, h: 900 };
+    // At 100% the picture overflows by 200 x 100: at most 100 x 50 off centre.
+    expect(keptView({ scale: 1, x: 900, y: -900 }, fitScale(img, vp), img, vp)).toEqual({ scale: 1, x: 100, y: -50 });
+  });
+
+  it("centres a picture smaller than the view and respects the zoom limits", () => {
+    const small = { w: 200, h: 100 };
+    const v = keptView({ scale: 2, x: 500, y: 500 }, fitScale(small, vp), small, vp);
+    expect(v).toEqual({ scale: 2, x: 0, y: 0 });
+    const huge = { w: 40000, h: 30000 };
+    expect(keptView({ scale: 64, x: 0, y: 0 }, fitScale(huge, vp), huge, vp).scale).toBe(32);
+  });
+
+  it("uses the rotated size of the next picture", () => {
+    const img = { w: 1200, h: 900 };
+    // Rotated: 900 x 1200, so it overflows vertically only.
+    expect(keptView({ scale: 1, x: 300, y: 300 }, fitScale(img, vp, 1), img, vp, 1)).toEqual({ scale: 1, x: 0, y: 200 });
   });
 });
