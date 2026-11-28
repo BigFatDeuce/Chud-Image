@@ -488,9 +488,8 @@ export function Editor({ path, url, fallbackUrl, turns: startTurns, canReplace, 
     const p = toImage(e);
     setCropDraft(dragCrop(d.start, d.handle, p[0] - d.origin[0], p[1] - d.origin[1], oriented, ratioValue(ratioId), 16 / Math.max(scale, 0.01)));
   };
+  // Called by onStageUp, which has already cleared `drag`.
   const onCropUp = () => {
-    if (drag.current?.kind !== "crop") return;
-    drag.current = null;
     if (cropDraft) {
       const full = cropDraft.x <= 0.5 && cropDraft.y <= 0.5 && cropDraft.w >= oriented.w - 0.5 && cropDraft.h >= oriented.h - 0.5;
       commit((s) => ({ ...s, crop: full ? null : cropDraft }));
