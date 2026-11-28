@@ -22,6 +22,11 @@ No library to import, no account, no cloud.
 
 ## What's new
 
+### 1.3.3
+
+- **Fixed:** a crop drawn by hand was shown but not kept: saving, or switching to another tool,
+  went back to the previous framing. Only the ratio presets worked.
+
 ### 1.3.2
 
 - **Zoom kept between photos:** zoom in, then go to the next or previous photo, and it opens at
